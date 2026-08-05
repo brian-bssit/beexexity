@@ -471,24 +471,20 @@ export async function repairResponse(
 
 // ─── Semantic Verification ─────────────────────────────────────────────────────────
 
-/** Skills that get LLM-as-a-judge semantic verification after inference. */
-const SEMANTIC_VERIFY_SKILLS = ['compliance_pre_assessment', 'logic_math', 'code', 'risk_analyst', 'data_analysis', 'document_analysis'];
-
 /**
  * Lightweight LLM-as-a-judge — checks whether the assistant response is
  * semantically correct and complete for the original prompt.
  *
- * Only runs for high-stakes skills (compliance, math, doc analysis, code).
- * Uses qwen3-32b with a strict judge prompt, maxTokens=256.
+ * Runs for ALL skills. Uses qwen3-32b with a strict judge prompt, maxTokens=256,
+ * temperature=0 for deterministic verdicts.
  *
  * @returns { is_correct, missing_elements } or null on failure (graceful degradation).
  */
 export async function semanticJudge(
   originalPrompt: string,
   assistantText: string,
-  skill: string,
+  _skill: string,
 ): Promise<{ is_correct: boolean; missing_elements: string[] } | null> {
-  if (!SEMANTIC_VERIFY_SKILLS.includes(skill)) return null;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);

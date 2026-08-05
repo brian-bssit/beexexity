@@ -9,6 +9,7 @@ import { inferenceRouter } from './routes/inference.routes.js';
 import { sessionRouter } from './routes/session.routes.js';
 import feedbackRoutes from './routes/feedback.routes.js';
 import generationRoutes from './routes/generation.routes.js';
+import adminApplicationsRoutes from './routes/admin-applications.routes.js';
 import { ErrorResponse } from './types/error.types.js';
 import { securityHeaders, apiRateLimit } from './middleware/security.middleware.js';
 
@@ -92,6 +93,7 @@ app.use(express.static(join(__dirname, '..', 'public'), {
 // --- Route Mounting ---
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/admin', adminApplicationsRoutes);
 app.use('/api/v1/models', modelsRoutes);
 app.use('/api/v1/inference', inferenceRouter);
 app.use('/api/v1/sessions', sessionRouter);

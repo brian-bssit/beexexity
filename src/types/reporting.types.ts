@@ -24,6 +24,11 @@ export interface UserCostReport {
   /** null when any model row lacked a pricing snapshot. */
   estimatedCostUsd: number | null;
   breakdown: UserModelBreakdown[];
+  // Multi-tenant API key tracking (nullable — only populated for API key requests)
+  applicationId?: string | null;
+  applicationName?: string | null;
+  apiKeyId?: string | null;
+  keyPrefix?: string | null;
 }
 
 /** Paginated response for the cost-reporting endpoint. */
@@ -52,4 +57,9 @@ export interface CostReportAuditRow {
   output_tokens: string;
   request_count: string;
   model_pricing_snapshot: Record<string, number> | null;
+  // Multi-tenant API key fields
+  application_id?: string | null;
+  application_name?: string | null;
+  api_key_id?: string | null;
+  key_prefix?: string | null;
 }

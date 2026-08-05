@@ -2408,11 +2408,11 @@ async function handleSend() {
             fullText += data.content;
             if (!startedGenerating) {
               startedGenerating = true;
+              _progressivePrev = ''; // reset for new response
               if (scopedStepStatus) scopedStepStatus.innerHTML = '<span style=\'color:var(--accent)\'>🤖 Generating response...</span>';
             }
-            const contentEl = assistantEl.querySelector('.assistant-text-content');
-            if (contentEl) contentEl.innerHTML = formatMessage(sanitizePartialMarkdown(fullText));
-            scrollToBottom();
+            // Throttled progressive render — only re-render the in-progress last line
+            _scheduleProgressive(assistantEl);
           } else if (eventType === 'session') {
             // Store the session ID from the server
             if (data.sessionId) {
@@ -2654,11 +2654,10 @@ async function handleSend() {
               fullText += data.content;
               if (!startedGenerating) {
                 startedGenerating = true;
+                _progressivePrev = ''; // reset for new response
                 if (scopedStepStatus) scopedStepStatus.innerHTML += '<br><span style=\'color:var(--accent)\'>🔄 Combining results...</span>';
               }
-              const contentEl = assistantEl.querySelector('.assistant-text-content');
-              if (contentEl) contentEl.innerHTML = formatMessage(fullText);
-              scrollToBottom();
+              _scheduleProgressive(assistantEl);
             }
           } else if (eventType === 'verification') {
             // Verification event — update tech-details inside status panel
@@ -2686,8 +2685,10 @@ async function handleSend() {
               }
             }
           } else if (eventType === 'done') {
-            // Inference complete — final render without sanitization
-            try { const contentEl = assistantEl.querySelector('.assistant-text-content'); if (contentEl) contentEl.innerHTML = formatMessage(fullText); } catch (e) { console.error('[ui] Render error:', e); }
+            // Inference complete — final full render with proper markdown
+            if (_progressiveRaf) { cancelAnimationFrame(_progressiveRaf); _progressiveRaf = 0; }
+            _progressivePrev = '';
+            try { const contentEl = assistantEl.querySelector('.assistant-text-content'); if (contentEl) { contentEl.innerHTML = formatMessage(fullText); } } catch (e) { console.error('[ui] Render error:', e); }
             if (scopedStepStatus) {
               const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
               scopedStepStatus.innerHTML = '<span style=\'color:var(--text-tertiary)\'>✅ Done (' + elapsed + 's)</span>';
@@ -2697,6 +2698,8 @@ async function handleSend() {
             // for server res.end() (which can take seconds for DB storage).
             reader.cancel().catch(() => {});
           } else if (eventType === 'error') {
+            if (_progressiveRaf) { cancelAnimationFrame(_progressiveRaf); _progressiveRaf = 0; }
+            _progressivePrev = '';
             if (data.error === 'SESSION_EXPIRED' || data.error === 'SESSION_NOT_FOUND') {
               // Clear chat UI and reset session
               assistantEl.remove();
@@ -3439,6 +3442,109 @@ function sanitizePartialMarkdown(text) {
     text += '\n```';
   }
   return text;
+}
+
+// ── Progressive Stream Rendering ──────────────────────────────────────────
+// Instead of re-rendering the entire accumulated text on every delta chunk,
+// we only re-render the last (in-progress) paragraph. Previously-committed
+// paragraphs are rendered once and never touched again — eliminating flicker
+// and reducing per-delta CPU cost from O(n) to O(1).
+
+let _progressivePrev = ''; // previously rendered fullText snapshot
+let _progressiveRaf = 0;    // pending rAF ID for throttling
+
+// Throttle delta rendering to at most one per animation frame.
+// If deltas arrive faster than 60fps, we skip intermediate renders and
+// render only the latest state on the next frame.
+function _scheduleProgressive(assistantEl) {
+  if (_progressiveRaf) return; // already scheduled
+  _progressiveRaf = requestAnimationFrame(() => {
+    _progressiveRaf = 0;
+    const contentEl = assistantEl.querySelector('.assistant-text-content');
+    if (contentEl && fullText !== _progressivePrev) {
+      renderProgressiveStream(contentEl, _progressivePrev, fullText);
+      _progressivePrev = fullText;
+    }
+    scrollToBottom();
+  });
+}
+
+function renderProgressiveStream(container, prevFull, newFull) {
+  // Fast path: if no change or empty, skip
+  if (newFull === prevFull) return;
+
+  const prevLines = prevFull.split('\n');
+  const newLines = newFull.split('\n');
+
+  // If we have more lines now than before, commit the newly-completed lines
+  if (newLines.length > prevLines.length) {
+    // Render newly committed lines (lines that were in-progress before but now complete)
+    for (let i = prevLines.length - 1; i < newLines.length - 1; i++) {
+      const committed = newLines.slice(i, i + 1).join('\n');
+      if (committed.trim()) {
+        container.innerHTML += formatLine(committed);
+      } else {
+        container.innerHTML += '<br>';
+      }
+    }
+  }
+
+  // Always re-render the last (in-progress) line
+  const lastLine = newLines[newLines.length - 1];
+  // Strip trailing partial markdown tokens but preserve content
+  const clean = sanitizePartialMarkdown(lastLine);
+
+  // Find or create the in-progress span
+  let ip = container.querySelector('.streaming-line');
+  if (!ip) {
+    ip = document.createElement('span');
+    ip.className = 'streaming-line';
+    container.appendChild(ip);
+  }
+  ip.innerHTML = formatMarkdownInline(clean);
+}
+
+// Lightweight inline parser — only handles bold, italic, code, links.
+// Avoids full block-level parsing that would break inside a single line.
+function formatMarkdownInline(text) {
+  if (!text) return '';
+  let html = escapeHtml(text);
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Inline links: [text](url)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  return html;
+}
+
+// Helper: format a single committed line as block HTML
+function formatLine(text) {
+  if (!text) return '<br>';
+  // Run full formatMessage on single line to get proper HTML
+  // But we need to avoid nesting — just do inline formatting for a single line
+  const trimmed = text.trimStart();
+  const indent = text.length - trimmed.length;
+
+  // Headings
+  const hMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+  if (hMatch) {
+    const level = Math.min(parseInt(hMatch[1].length) + 1, 6); // +1 because h1 is page title
+    return `<h${level}>${formatMarkdownInline(hMatch[2])}</h${level}>`;
+  }
+  // Blockquote
+  if (trimmed.startsWith('> ')) {
+    return `<blockquote>${formatMarkdownInline(trimmed.slice(2))}</blockquote>`;
+  }
+  // Horizontal rule
+  if (/^[-*_]{3,}$/.test(trimmed)) return '<hr>';
+  // Unordered list
+  const ulMatch = trimmed.match(/^(-|\*)\s+(.+)$/);
+  if (ulMatch) return `<ul><li>${formatMarkdownInline(ulMatch[2])}</li></ul>`;
+  // Ordered list
+  const olMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+  if (olMatch) return `<ol><li>${formatMarkdownInline(olMatch[2])}</li></ol>`;
+  // Paragraph
+  return `<p>${formatMarkdownInline(trimmed)}</p>`;
 }
 
 

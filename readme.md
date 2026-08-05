@@ -1,6 +1,6 @@
-# Tech Reference: Beexexity — Unified Inference Gateway
+# Tech Reference: Siap Ditanya — Unified Inference Gateway
 
-> For code review & evaluation. Covers architecture, tech stack, routing, memory, and all subsystems.
+> SIstem AI Privasi, DIpetakan perTANYAannya. For code review & evaluation. Covers architecture, tech stack, routing, memory, and all subsystems.
 
 ---
 
@@ -16,10 +16,10 @@
 | Bedrock SDK | `@aws-sdk/client-bedrock-runtime` | ^3.700 |
 | Document parsing | `pdf-parse`, `mammoth`, `officeparser`, `cheerio`, `xlsx`, `turndown` + GFM | PDF, DOCX, PPTX, XLSX, HTML, Markdown output |
 | Office conversion | Gotenberg (sidecar Cloud Run service) | .doc, .ppt → PDF → text |
-| Auth | JWT (`jsonwebtoken`) + bcrypt + Google OAuth (`google-auth-library`) + X-API-Key | HS256, local + Google sign-in + M2M batch + passthrough mode |
+| Auth | JWT (`jsonwebtoken`) + bcrypt + Google OAuth (`google-auth-library`) + Multi-Tenant API Key (SHA-256, timingSafeEqual) | HS256, local + Google sign-in + per-application M2M keys |
 | File uploads | `multer` | Memory storage, 10MB/file, max 5 files |
-| PPTX generation | HTML-first via Gotenberg Chromium + JSON fallback via `python-pptx` | 10 CSS Variable-based themes, layout validation |
-| PDF generation | Gotenberg (HTML→PDF Chromium, PPTX→PDF LibreOffice) | Existing sidecar, reused |
+| PPTX generation | HTML-first via Gotenberg Chromium + JSON fallback via `python-pptx` | 10 CSS Variable-based themes, 7 layouts, content-adaptive layout selection, 5 rhythm patterns |
+| PDF generation | Gotenberg (HTML→PDF Chromium, document-centric HTML) | A4 format, CSS @page, serif typography, separate document prompt |
 | Testing | Vitest | `@/` alias → `./src/*` |
 | Linting | ESLint 9 + `typescript-eslint` | Flat config |
 | Build | `tsc` | Output: `dist/` |
@@ -42,7 +42,7 @@ Users → GCP Cloud Run (asia-southeast2)
            ├── AWS Bedrock Account #1 (LLM inference, ap-southeast-3)
            ├── GCP Cloud SQL (PostgreSQL, public IP + SSL)
            └── python-pptx service (Cloud Run internal, asia-southeast2)
-GhostMeet (M2M) → POST /api/v1/inference/batch (API key auth)
+External Apps (M2M) → POST /api/v1/inference/batch (x-api-key header, SHA-256 hashed, per-application billing)
 ```
 
 ---
@@ -58,34 +58,31 @@ src/
 │   ├── database.ts        # pg Pool + query() helper + closePool()
 │   └── model-capabilities.ts  # Static model→capability registry (6 models)
 ├── middleware/
-│   ├── auth.middleware.ts       # JWT Bearer + X-API-Key (timingSafeEqual) validation
-│   ├── admin.middleware.ts      # Admin role guard
+│   ├── auth.middleware.ts       # JWT Bearer + Multi-Tenant API Key (SHA-256 DB lookup, conditional x-username enforcement)
+│   ├── admin.middleware.ts      # Admin role guard (blocks api_key role)
 │   ├── password-reset.middleware.ts  # Force password reset gate
 │   ├── security.middleware.ts       # Security headers, rate limiters (login/API/inference)
 │   └── upload.middleware.ts         # Multer config, MIME whitelist, error handler
 ├── routes/
 │   ├── auth.routes.ts        # POST /login, POST /google, GET /google/config, POST /change-password
-│   ├── admin.routes.ts       # POST|PUT /users, GET /usage/cost, POST /users/bulk
+│   ├── admin.routes.ts       # POST|PUT /users, GET /usage/cost (extended: applicationId, apiKeyId, username filters), POST /users/bulk
 │   │                         # + GET/PUT /config (passthrough_mode)
 │   │                         # + GET/POST /discovered-roles (accept/reject/deploy)
+│   ├── admin-applications.routes.ts  # CRUD /applications, CRUD /applications/:id/keys, PUT /keys/:id, DELETE /keys/:id
 │   ├── models.routes.ts      # GET / (available models with pricing)
-│   ├── inference.routes.ts   # POST /generate (JSON + multipart), POST /batch (API key auth)
+│   ├── inference.routes.ts   # POST /generate (SSE streaming + grounding + semantic judge), POST /batch (multi-tenant API key auth, x-username header)
 │   │                         # + GET /sessions/active, POST /sessions/reset
-│   ├── generation.routes.ts  # POST /pptx, POST /pdf (file generation, multipart support, context injection)
+│   ├── generation.routes.ts  # POST /pptx, POST /pdf (document HTML for PDF, slide HTML for PPTX, multipart, context injection)
 │   ├── session.routes.ts     # GET /, GET /:id/messages, GET /:id/stats, POST /:id/resume
 │   └── feedback.routes.ts    # POST / (submit), GET/PUT /admin (admin review + synthesis)
 ├── services/
 │   ├── auth.service.ts           # Login, JWT sign/verify, user CRUD, Google OAuth
 │   ├── session.service.ts        # Session lifecycle, messages CRUD, stats
-│   ├── inference.service.ts      # Bedrock ConverseStream/Converse/InvokeModel, retry, SSE, OCR, repair, semantic judge
+│   ├── inference.service.ts      # Bedrock ConverseStream/Converse/InvokeModel, retry, SSE, OCR, repair, semantic judge (all skills)
 │   ├── routing-engine.service.ts # 24-skill classifier + refinement + complexity scoring + policy + verification
 │   │                            # + validateSkillInvariants() post-classification guard (10 rules)
 │   ├── routing-policy.service.ts # Model selection: manual→long→vision→text
 │   ├── sequential-reasoning.service.ts  # Multi-step planner→executor→synthesizer for complex queries
-│   │   ├── planner()             # LLM generates 2-6 step plan, returns null for 1 step (fallback)
-│   │   ├── executor()            # Sequential step loop with retry, PII per step, audit per step
-│   │   ├── synthesizer()         # Always-executes final layer, handles partial/complete/failure
-│   │   └── progressiveSynthesis()# Emits interim insight every PROGRESSIVE_INTERVAL steps
 │   ├── pii-masker.service.ts     # Indonesian PII detection (NIK, HP, rekening, nama, bank)
 │   ├── context-assembly.service.ts    # Sliding window, char budget, routing_payload, summary+facts injection
 │   ├── session-memory.service.ts      # Load memory state, summarize evicted, extract facts
@@ -93,28 +90,31 @@ src/
 │   ├── document-extractor.service.ts   # PDF, DOCX, PPTX, XLSX, HTML, JSON, CSV, TXT, MD, XML (output: Markdown)
 │   ├── image-processor.service.ts      # Image buffer → base64 content block
 │   ├── upload-validator.service.ts     # Classify files → documents/images, MIME checks
-│   ├── audit.service.ts                # Fire-and-forget audit logs + billing context columns
-│   ├── cost-reporting.service.ts       # Per-user cost aggregation
+│   ├── audit.service.ts                # Fire-and-forget audit logs + api_key_id + application_id FKs
+│   ├── cost-reporting.service.ts       # Per-user cost aggregation + application/api-key filters
 │   ├── config.service.ts               # App config (passthrough_mode) with DB + in-memory cache
-│   ├── few-shot-library.ts             # Per-skill golden examples for format adherence (+ meeting_summary)
-│   ├── gotenberg.service.ts            # Legacy Office → PDF, HTML→PDF (Chromium), HTML→PPTX (screenshot+JSZip), PPTX→PDF (LibreOffice)
-│   ├── pptx-generator.service.ts        # PPTX/PDF generation: HTML-first (CSS Variable theming, 10 themes, layout & theme validation) + JSON fallback, retry
+│   ├── application.service.ts          # Multi-tenant application CRUD (admin-only)
+│   ├── api-key.service.ts              # API key generate (bex_ + 32 hex, SHA-256), validate, CRUD, timingSafeEqual
+│   ├── few-shot-library.ts             # Per-skill golden examples for format adherence
+│   ├── gotenberg.service.ts            # HTML→PPTX (cheerio→JSZip), HTML→PDF (Chromium, slide + document formats), Office→PDF
+│   ├── pptx-generator.service.ts        # PPTX: HTML slide generation (10 themes, 7 layouts, content-adaptive). PDF: document HTML generation (A4, serif).
 │   ├── pptx-themes.ts                  # 10 CSS Variable-based themes + 7 layout classes
 │   └── file-signature-validator.ts     # Magic byte heuristic gate
 ├── frontend/
 │   ├── cost-display.ts          # IDR rate fetch, session cost tracking
 │   └── pricing-config.json      # Per-model pricing (input/output per 1M tokens, + DeepSeek V3.2)
 ├── types/
-│   ├── auth.types.ts
+│   ├── auth.types.ts            # TokenPayload (role: admin|user|api_key), LoginResult, UserProfile
+│   ├── api-key.types.ts         # Application, ApiKey, ApiKeyCreated, ApiKeyContext
 │   ├── session.types.ts         # Session, StoredMessage, BedrockMessage, AssembledContext, SessionStats
 │   ├── inference.types.ts       # + SequentialStep, SequentialPlan, StepResult, SequentialOrchestrationMeta
 │   ├── routing.types.ts         # 24 skills, PromptContract with behavioral_instructions & output_format
 │   ├── pii.types.ts
 │   ├── upload.types.ts          # DocumentFile, ImageFile, ExtractionResult, ContentBuildInput, ContentBlock
-│   ├── audit.types.ts           # + billedUserId, billedGroup, apiKeyUsed
+│   ├── audit.types.ts           # + apiKeyId, applicationId (deprecates apiKeyUsed)
 │   ├── pptx.types.ts           # Content JSON schema for JSON fallback path (6 slide types), HTML path uses CSS layouts
 │   ├── pricing.types.ts
-│   ├── reporting.types.ts
+│   ├── reporting.types.ts       # + applicationId, applicationName, apiKeyId, keyPrefix on UserCostReport
 │   └── error.types.ts
 └── scripts/
     └── run-migrations.ts    # Idempotent migration runner (creates _migrations table)
@@ -133,24 +133,28 @@ pptx-service/                     # Python PPTX microservice (separate Cloud Run
 cloudbuild-pptx.yaml              # Separate Cloud Build trigger for python-pptx service
 
 migrations/
-├── 001_initial_schema.sql ... 019_add_billing_context.sql
-├── 020_add_passthrough_flag.sql  # Passthrough mode flag on audit_logs
-└── 021_app_config.sql            # App config table (passthrough_mode toggle)
+├── 001_initial_schema.sql ... 021_app_config.sql
+├── 022_applications_api_keys.sql   # Multi-tenant: applications + api_keys tables
+└── 023_alter_audit_logs.sql        # Multi-tenant: api_key_id, application_id FKs, nullable username
 
 tests/
-└── unit/                           # 27 test files
-    ├── routing-engine.test.ts      # 14 tests (validateSkillInvariants + meeting_summary)
-    ├── sequential-reasoning.test.ts # 16 tests (planner, executor, retry, PII, progressive, SSE, audit)
-    ├── pptx-generator.service.test.ts  # 5 tests (validation, types, slide structures)
-    └── ... (24 other test files)
+└── unit/                           # 30 test files, 414 tests
+    ├── api-key.service.test.ts     # 13 tests (generate, hash, validate, deactivate, delete)
+    ├── application.service.test.ts # 12 tests (CRUD, duplicate rejection, key_count)
+    ├── api-key-auth.middleware.test.ts  # 8 tests (6 auth scenarios + error paths)
+    ├── admin-applications.routes.test.ts # 10 tests (CRUD endpoints)
+    ├── routing-engine.test.ts      # 14 tests
+    ├── sequential-reasoning.test.ts # 16 tests
+    └── ... (25 other test files)
 
 docs/
-├── tech-reference.md            # This file
+├── readme.md                    # This file
 ├── prompt-reference.md          # System prompt catalog
 ├── admin-dashboard.md           # Admin UI docs
-├── beautify-render.md           # SSE markdown rendering proposal
-├── ppt-doc-generation.md        # Original TRD for PPTX/PDF generation (superseded — see feature-pptx-generation/)
+├── beautify-render.md           # SSE progressive rendering proposal
+├── ppt-doc-generation.md        # Original TRD for PPTX/PDF generation
 ├── features/
+│   ├── multi-tenant-api-key/    # Multi-tenant API key feature (req + design + tasks)
 │   ├── google-auth/             # Google OAuth feature (design + tasks)
 │   ├── model-access/            # Model access control design
 │   ├── passthrough-mode/        # Passthrough mode feature (req + design + tasks)
@@ -167,8 +171,8 @@ docs/
     └── kiro/                    # Kiro tool spec docs (archived)
 
 public/
-├── admin.html                      # Admin dashboard — 7 tabs (+ Discovered Roles)
-└── index.html                      # SPA frontend — Auto only, no "Thinking" mode
+├── admin.html                      # Admin dashboard — 7 tabs: Applications & Keys, Bulk Upload, Usage & Cost, Config, Model Access, Feedback, Discovered Roles
+└── index.html                      # SPA frontend — SSE streaming with progressive render (rAF-throttled), grounding instruction, semantic judge
 ```
 
 ---

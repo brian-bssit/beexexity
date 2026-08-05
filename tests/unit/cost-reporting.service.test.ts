@@ -131,7 +131,7 @@ describe('CostReportingService', () => {
 
       expect(mockedQuery).toHaveBeenCalledWith(
         expect.stringContaining('COUNT(DISTINCT'),
-        ['2026-06-01', '2026-06-30'],
+        ['2026-06-01', '2026-06-30', null, null, null],
       );
     });
 

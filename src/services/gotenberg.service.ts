@@ -110,24 +110,39 @@ export async function convertPptxToPdf(pptxBuffer: Buffer, filename: string = 'p
 }
 
 /**
- * Convert HTML slides to PDF via Gotenberg Chromium.
- * Each <section class="slide"> becomes a page with perfect CSS rendering.
+ * Convert HTML to PDF via Gotenberg Chromium.
+ * Supports two formats:
+ *   - 'slide' (PPTX): 16:9 ratio, zero margins, print backgrounds
+ *   - 'document' (PDF): A4, 2cm margins, CSS @page honored
  */
-export async function htmlToPdfViaGotenberg(html: string): Promise<Buffer> {
+export async function htmlToPdfViaGotenberg(html: string, format: 'slide' | 'document' = 'slide'): Promise<Buffer> {
   const gotenbergUrl = config.gotenberg.url;
   if (!gotenbergUrl) throw new Error('GOTENBERG_URL not configured');
 
   const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${html}</body></html>`;
   const form = new FormData();
   form.append('files', new Blob([fullHtml], { type: 'text/html' }), 'index.html');
-  form.append('paperWidth', '13.33');  // 16:9 in inches
-  form.append('paperHeight', '7.5');
-  form.append('marginTop', '0');
-  form.append('marginBottom', '0');
-  form.append('marginLeft', '0');
-  form.append('marginRight', '0');
+
+  if (format === 'document') {
+    // A4 document — use CSS @page from the HTML, with sensible Gotenberg defaults
+    form.append('paperWidth', '8.27');   // A4
+    form.append('paperHeight', '11.69');
+    form.append('marginTop', '0.79');    // 2cm
+    form.append('marginBottom', '0.79');
+    form.append('marginLeft', '0.79');
+    form.append('marginRight', '0.79');
+    form.append('preferCssPageSize', 'true');  // honor CSS @page { size: A4; margin: 2cm; }
+  } else {
+    // 16:9 slide — exact dimensions for presentation export
+    form.append('paperWidth', '13.33');
+    form.append('paperHeight', '7.5');
+    form.append('marginTop', '0');
+    form.append('marginBottom', '0');
+    form.append('marginLeft', '0');
+    form.append('marginRight', '0');
+    form.append('preferCssPageSize', 'true');
+  }
   form.append('printBackground', 'true');
-  form.append('preferCssPageSize', 'true');
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.gotenberg.timeoutMs);

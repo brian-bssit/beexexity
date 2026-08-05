@@ -12,9 +12,9 @@ export interface LoginResult {
 }
 
 export interface TokenPayload {
-  sub: string;       // user ID
+  sub: string;       // user ID (or applicationId for API key auth)
   username: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'api_key';
   authProvider?: 'local' | 'google';  // present for Google-authenticated users
   iat: number;
   exp: number;

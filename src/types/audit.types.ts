@@ -75,7 +75,12 @@ export interface AuditEntry {
   // Billing context for machine-to-machine batch inference
   billedUserId?: string;
   billedGroup?: string;
+  /** @deprecated Replaced by apiKeyId — presence of apiKeyId implies API key was used. */
   apiKeyUsed?: boolean;
+
+  // Multi-tenant API key tracking
+  apiKeyId?: string;
+  applicationId?: string;
 
   // Passthrough mode flag
   passthrough?: boolean;

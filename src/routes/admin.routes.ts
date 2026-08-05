@@ -301,8 +301,15 @@ router.get('/usage/cost', async (req: Request, res: Response): Promise<void> => 
   const rawPageSize = parseInt(String(req.query.pageSize ?? ''), 10) || 20;
   const pageSize = Math.min(100, Math.max(1, rawPageSize));
 
+  const applicationId = typeof req.query.applicationId === 'string' && req.query.applicationId.trim()
+    ? req.query.applicationId.trim() : undefined;
+  const apiKeyId = typeof req.query.apiKeyId === 'string' && req.query.apiKeyId.trim()
+    ? req.query.apiKeyId.trim() : undefined;
+  const username = typeof req.query.username === 'string' && req.query.username.trim()
+    ? req.query.username.trim() : undefined;
+
   try {
-    const report = await getCostReport(from, to, page, pageSize);
+    const report = await getCostReport(from, to, page, pageSize, applicationId, apiKeyId, username);
     res.status(200).json(report);
   } catch (err: unknown) {
     console.error('[admin] Cost report failed:', (err as Error).message);

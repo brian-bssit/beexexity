@@ -127,14 +127,17 @@ inferenceRouter.post('/generate', authMiddleware, forcePasswordResetMiddleware, 
 /**
  * POST /batch
  *
- * Non-streaming batch inference for machine-to-machine calls (GhostMeet → beexexity).
- * Auth: X-API-Key header (apiKeyAuthMiddleware).
+ * Non-streaming batch inference for machine-to-machine calls.
+ * Auth: x-api-key header (apiKeyAuthMiddleware).
+ *
+ * Request headers:
+ *   - x-api-key: string (required — API key from admin panel)
+ *   - x-username: string (required ONLY if application billing_mode is PER_USER)
  *
  * Request body:
  *   - prompt: string (required, non-empty, ≤256KB)
  *   - modelId: string (required — manual routing always)
  *   - config: { maxTokens?, temperature? } (optional)
- *   - billingContext: { billedUserId: string, billedGroup?: string } (optional)
  *   - responseFormat: "json" (optional, enables response_format: json_object)
  *
  * Response: Plain JSON { summary, decisions, actionItems, metadata }
@@ -150,7 +153,7 @@ inferenceRouter.post('/batch',
   apiKeyAuthMiddleware,
   async (req: Request, res: Response): Promise<void> => {
     const startTime = Date.now();
-    const { prompt, modelId, config: inferenceConfig, billingContext, responseFormat } = req.body;
+    const { prompt, modelId, config: inferenceConfig, responseFormat } = req.body;
     const user = req.user!;
 
     // 1. Validate prompt
@@ -285,10 +288,10 @@ inferenceRouter.post('/batch',
         inputTokens: Math.ceil(maskedPrompt.length / 4), outputTokens: 0,
         status: 'failed', errorCategory: (error as Error).name === 'TimeoutError' ? 'timeout' : 'model_error',
         durationMs, routingState: 'manual', routingReasonCode: 'batch-inference',
-        reasoningSummary: 'Batch inference (GhostMeet → beexexity)', executedModelId: validatedModelId,
+        reasoningSummary: 'Batch inference', executedModelId: validatedModelId,
         manualOverrideApplied: true,
-        billedUserId: billingContext?.billedUserId ?? null,
-        billedGroup: billingContext?.billedGroup ?? null, apiKeyUsed: true,
+        apiKeyId: req.apiKeyContext?.apiKeyId,
+        applicationId: req.apiKeyContext?.applicationId, apiKeyUsed: true,
       }).catch(() => {});
       res.status(500).json({ error: 'INFERENCE_ERROR', message: 'Model inference failed' });
       return;
@@ -310,8 +313,8 @@ inferenceRouter.post('/batch',
           routingState: 'manual', routingReasonCode: 'batch-inference',
           reasoningSummary: 'PII detected in model output — discarded', executedModelId: validatedModelId,
           manualOverrideApplied: true,
-          billedUserId: billingContext?.billedUserId ?? null,
-          billedGroup: billingContext?.billedGroup ?? null, apiKeyUsed: true,
+          apiKeyId: req.apiKeyContext?.apiKeyId,
+          applicationId: req.apiKeyContext?.applicationId, apiKeyUsed: true,
         }).catch(() => {});
         res.status(500).json({ error: 'PII_OUTPUT_SCAN_FAILED', message: 'PII detected in model output.' });
         return;
@@ -353,11 +356,11 @@ inferenceRouter.post('/batch',
       durationMs,
       routingState: 'manual',
       routingReasonCode: 'batch-inference',
-      reasoningSummary: 'Batch inference (GhostMeet → beexexity)',
+      reasoningSummary: 'Batch inference',
       executedModelId: validatedModelId,
       manualOverrideApplied: true,
-      billedUserId: billingContext?.billedUserId ?? null,
-      billedGroup: billingContext?.billedGroup ?? null,
+      apiKeyId: req.apiKeyContext?.apiKeyId,
+      applicationId: req.apiKeyContext?.applicationId,
       apiKeyUsed: true,
     }).catch(() => {});
 
@@ -750,6 +753,9 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
 
         // Append behavioral instructions if present
         if (bi) s += '\n\n' + bi;
+
+        // Grounding: prevent hallucination by anchoring to provided context
+        s += '\n\nIf the user provides documents or data, base your answer strictly on that material. If asked about something not covered in the provided information, say "Informasi ini tidak tersedia dalam dokumen yang diberikan" instead of guessing. For facts, numbers, and regulations, do not fabricate — state your uncertainty if unsure.';
 
         return s;
       })(),
@@ -1586,6 +1592,8 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
         if (formatTemplate) {
           s += '\n\nFollow this output structure:\n' + formatTemplate;
         }
+        // Grounding: prevent hallucination by anchoring to provided context
+        s += '\n\nIf the user provides documents or data, base your answer strictly on that material. If asked about something not covered in the provided information, say "Informasi ini tidak tersedia dalam dokumen yang diberikan" instead of guessing. For facts, numbers, and regulations, do not fabricate — state your uncertainty if unsure.';
         return s;
       })(),
         ...(inferenceConfig && {

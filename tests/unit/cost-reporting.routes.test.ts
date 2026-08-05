@@ -123,7 +123,7 @@ describe('GET /api/v1/admin/usage/cost', () => {
     const res = createMockRes();
     await handler(req, res);
 
-    expect(mockGetCostReport).toHaveBeenCalledWith(undefined, undefined, 1, 20);
+    expect(mockGetCostReport).toHaveBeenCalledWith(undefined, undefined, 1, 20, undefined, undefined, undefined);
   });
 
   it('clamps pageSize to max 100', async () => {
@@ -133,7 +133,7 @@ describe('GET /api/v1/admin/usage/cost', () => {
     const res = createMockRes();
     await handler(req, res);
 
-    expect(mockGetCostReport).toHaveBeenCalledWith(undefined, undefined, 1, 100);
+    expect(mockGetCostReport).toHaveBeenCalledWith(undefined, undefined, 1, 100, undefined, undefined, undefined);
   });
 
   it('clamps page to min 1', async () => {
@@ -143,7 +143,7 @@ describe('GET /api/v1/admin/usage/cost', () => {
     const res = createMockRes();
     await handler(req, res);
 
-    expect(mockGetCostReport).toHaveBeenCalledWith(undefined, undefined, 1, 20);
+    expect(mockGetCostReport).toHaveBeenCalledWith(undefined, undefined, 1, 20, undefined, undefined, undefined);
   });
 
   it('returns 500 on service error', async () => {
@@ -166,6 +166,6 @@ describe('GET /api/v1/admin/usage/cost', () => {
     const res = createMockRes();
     await handler(req, res);
 
-    expect(mockGetCostReport).toHaveBeenCalledWith('2026-06-01', '2026-06-30', 1, 20);
+    expect(mockGetCostReport).toHaveBeenCalledWith('2026-06-01', '2026-06-30', 1, 20, undefined, undefined, undefined);
   });
 });

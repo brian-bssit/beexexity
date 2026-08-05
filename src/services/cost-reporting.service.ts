@@ -13,19 +13,26 @@ import type {
  */
 
 /**
- * Get a paginated per-user cost report, optionally filtered by date range.
+ * Get a paginated per-user cost report, optionally filtered by date range
+ * and multi-tenant API key dimensions.
  *
  * @param from  ISO date string for earliest timestamp (inclusive), or undefined for no lower bound
  * @param to    ISO date string for latest date (inclusive — the entire day is included),
  *              or undefined for no upper bound
  * @param page  Page number (1-based, default 1)
  * @param pageSize  Items per page (default 20, max 100)
+ * @param applicationId  Optional filter by application UUID
+ * @param apiKeyId  Optional filter by API key UUID
+ * @param username  Optional filter by tracking username (x-username header)
  */
 export async function getCostReport(
   from?: string,
   to?: string,
   page: number = 1,
   pageSize: number = 20,
+  applicationId?: string,
+  apiKeyId?: string,
+  username?: string,
 ): Promise<CostReportResponse> {
   const offset = (page - 1) * pageSize;
 
@@ -35,8 +42,11 @@ export async function getCostReport(
      FROM audit_logs al
      WHERE al.status = 'success'
        AND ($1::timestamptz IS NULL OR al.timestamp >= $1)
-       AND ($2::timestamptz IS NULL OR al.timestamp < $2::timestamptz + INTERVAL '1 day')`,
-    [from || null, to || null],
+       AND ($2::timestamptz IS NULL OR al.timestamp < $2::timestamptz + INTERVAL '1 day')
+       AND ($3::uuid IS NULL OR al.application_id = $3)
+       AND ($4::uuid IS NULL OR al.api_key_id = $4)
+       AND ($5::varchar IS NULL OR al.username = $5)`,
+    [from || null, to || null, applicationId || null, apiKeyId || null, username || null],
   );
   const total = parseInt(countResult.rows[0].count, 10);
 
@@ -52,6 +62,9 @@ export async function getCostReport(
        WHERE al.status = 'success'
          AND ($1::timestamptz IS NULL OR al.timestamp >= $1)
          AND ($2::timestamptz IS NULL OR al.timestamp < $2::timestamptz + INTERVAL '1 day')
+         AND ($5::uuid IS NULL OR al.application_id = $5)
+         AND ($6::uuid IS NULL OR al.api_key_id = $6)
+         AND ($7::varchar IS NULL OR al.username = $7)
        ORDER BY al.user_id
        LIMIT $3 OFFSET $4
      )
@@ -63,16 +76,23 @@ export async function getCostReport(
        SUM(al.input_tokens)::bigint  AS input_tokens,
        SUM(al.output_tokens)::bigint AS output_tokens,
        COUNT(*)::integer              AS request_count,
-       al.model_pricing_snapshot
+       al.model_pricing_snapshot,
+       al.application_id,
+       app.name AS application_name,
+       al.api_key_id,
+       k.key_prefix
      FROM audit_logs al
      LEFT JOIN users u ON u.id = al.user_id
+     LEFT JOIN applications app ON app.id = al.application_id
+     LEFT JOIN api_keys k ON k.id = al.api_key_id
      WHERE al.user_id IN (SELECT fu.user_id FROM filtered_users fu)
        AND al.status = 'success'
        AND ($1::timestamptz IS NULL OR al.timestamp >= $1)
        AND ($2::timestamptz IS NULL OR al.timestamp < $2::timestamptz + INTERVAL '1 day')
-     GROUP BY al.user_id, al.username, u.display_name, al.model_id, al.model_pricing_snapshot
+     GROUP BY al.user_id, al.username, u.display_name, al.model_id, al.model_pricing_snapshot,
+              al.application_id, app.name, al.api_key_id, k.key_prefix
      ORDER BY al.user_id, al.model_id`,
-    [from || null, to || null, pageSize, offset],
+    [from || null, to || null, pageSize, offset, applicationId || null, apiKeyId || null, username || null],
   );
 
   // 3. Assemble into user aggregates in JS (same pattern as getSessionStats)
@@ -119,6 +139,10 @@ export async function getCostReport(
         requestCount: 0,
         estimatedCostUsd: 0,
         breakdown: [],
+        applicationId: row.application_id ?? null,
+        applicationName: row.application_name ?? null,
+        apiKeyId: row.api_key_id ?? null,
+        keyPrefix: row.key_prefix ?? null,
       };
       userMap.set(row.user_id, userReport);
     }

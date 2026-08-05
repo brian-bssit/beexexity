@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -9,10 +9,11 @@
   <title>Siap Ditanya — Admin</title>
   <script>window.addEventListener('pageshow',function(e){if(e.persisted)window.location.reload()});</script>
   <style>
+    @import url("https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap");
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
       --bg-primary: #0f0f0f; --bg-secondary: #1a1a1a; --bg-tertiary: #262626;
-      --text-primary: #ffffff; --text-secondary: #a0a0a0; --text-tertiary: #666666;
+      --text-primary: #f5f5f5; --text-secondary: #a0a0a0; --text-tertiary: #777777;
       --accent: #b5e4f7; --accent-hover: #9bd0e6; --border: #2a2a2a;
       --success: #4caf50; --error: #f44336; --warning: #ff9800;
     }
@@ -22,7 +23,7 @@
       --accent: #1a6b8a; --accent-hover: #155570; --border: #dddddd;
     }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'DM Sans', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
       background: var(--bg-primary); color: var(--text-primary);
       min-height: 100vh;
     }
@@ -37,7 +38,7 @@
       color: var(--text-primary); padding: 0.5rem 1rem; border-radius: 8px;
       cursor: pointer; font-size: 0.875rem;
     }
-    .back-btn:hover { background: var(--accent); color: #000; }
+    .back-btn:hover { background: var(--accent); color: #0f0f0f; }
     .admin-header h1 { font-size: 1.25rem; font-weight: 600; flex: 1; }
     .admin-header .token-status { font-size: 0.75rem; color: var(--text-tertiary); }
 
@@ -152,62 +153,38 @@
   </div>
 
   <div class="tab-bar" id="tab-bar">
-    <button class="tab-btn active" data-tab="single">Single User</button>
+    <button class="tab-btn active" data-tab="apps">Applications &amp; Keys</button>
     <button class="tab-btn" data-tab="bulk">Bulk Upload</button>
     <button class="tab-btn" data-tab="cost">Usage & Cost</button>
-    <button class="tab-btn" data-tab="settings">Account Settings</button>
     <button class="tab-btn" data-tab="config">Config</button>
     <button class="tab-btn" data-tab="models">Model Access</button>
     <button class="tab-btn" data-tab="feedback">Feedback Reports</button>
     <button class="tab-btn" data-tab="discovered">Discovered Roles</button>
   </div>
 
-  <!-- Tab 1: Single User -->
-  <div class="tab-content active" id="tab-single">
+  <!-- Tab: Applications & API Keys -->
+  <div class="tab-content active" id="tab-apps">
     <div style="display:flex;gap:0.5rem;margin-bottom:1.25rem">
-      <button class="btn btn-sm btn-secondary" onclick="showSingleMode('register')" id="su-mode-reg" style="background:var(--accent);color:#000">Register New</button>
-      <button class="btn btn-sm btn-secondary" onclick="showSingleMode('update')" id="su-mode-upd">Update Existing</button>
+      <button class="btn btn-sm btn-secondary" onclick="showAppsMode('list')" id="apps-mode-list" style="background:var(--accent);color:#000">Applications</button>
+      <button class="btn btn-sm btn-secondary" onclick="showAppsMode('new')" id="apps-mode-new">New Application</button>
     </div>
-
-    <!-- Register New User -->
-    <div id="su-register">
-      <div class="form-row">
-        <div><label>Username</label><input type="text" id="su-reg-username" placeholder="New username"></div>
-        <div><label>Display Name</label><input type="text" id="su-reg-displayName"></div>
-      </div>
-      <div class="form-row">
-        <div><label>Group Name</label><input type="text" id="su-reg-groupName" placeholder="e.g. IT Business Enablement"></div>
-        <div><label>Role</label><select id="su-reg-role"><option value="user">User</option><option value="admin">Admin</option></select></div>
-      </div>
-      <div class="form-row">
-        <div class="pwd-wrap"><label>Password (min 6 chars)</label><input type="password" id="su-reg-password" minlength="6"><button class="pwd-toggle" onclick="togglePwd('su-reg-password',this)">👁</button></div>
-        <div class="checkbox-row" style="align-items:flex-end;padding-bottom:0.75rem"><input type="checkbox" id="su-reg-forceReset" checked><label for="su-reg-forceReset">Force password reset</label></div>
-      </div>
-      <button class="btn btn-primary" onclick="registerSingleUser()">Create User</button>
+    <div id="apps-list-view"><div style="overflow-x:auto"><table><thead><tr><th>Name</th><th>Billing</th><th>Status</th><th>Keys</th><th>Created</th><th></th></tr></thead><tbody id="apps-table-body"><tr><td colspan="6" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr></tbody></table></div></div>
+    <div id="apps-form-view" style="display:none;max-width:500px">
+      <div><label>Application Name</label><input type="text" id="app-form-name" placeholder="e.g. GhostMeet"></div>
+      <div><label>Billing Mode</label><select id="app-form-billing"><option value="PER_APP">PER_APP — Cost attributed to app only</option><option value="PER_USER">PER_USER — Track cost per end-user</option></select></div>
+      <div style="display:flex;gap:0.75rem;margin-top:1rem"><button class="btn btn-primary" onclick="saveApplication()">Save</button><button class="btn btn-secondary" onclick="showAppsMode('list')">Cancel</button></div>
+      <input type="hidden" id="app-form-edit-id">
     </div>
-
-    <!-- Update Existing User -->
-    <div id="su-update" style="display:none">
-      <div class="form-row">
-        <div style="flex:3"><label>Username</label><input type="text" id="su-upd-username" placeholder="Enter username to edit"></div>
-        <div style="flex:1;display:flex;align-items:flex-end"><button class="btn btn-secondary" onclick="loadUpdateUser()" style="margin-bottom:0.75rem">Load</button></div>
-      </div>
-      <div id="su-upd-form" style="display:none">
-        <div class="form-row">
-          <div><label>Display Name</label><input type="text" id="su-upd-displayName"></div>
-          <div><label>Group Name</label><input type="text" id="su-upd-groupName" placeholder="e.g. IT Business Enablement"></div>
-        </div>
-        <div class="form-row">
-          <div><label>Role</label><select id="su-upd-role"><option value="user">User</option><option value="admin">Admin</option></select></div>
-          <div class="pwd-wrap"><label>New Password (leave blank to keep)</label><input type="password" id="su-upd-password" minlength="6"><button class="pwd-toggle" onclick="togglePwd('su-upd-password',this)">👁</button></div>
-        </div>
-        <div class="checkbox-row"><input type="checkbox" id="su-upd-forceReset"><label for="su-upd-forceReset">Force password reset on next login</label></div>
-        <button class="btn btn-primary" onclick="updateSingleUser()">Update User</button>
-      </div>
+    <div id="apps-keys-view" style="display:none">
+      <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem"><button class="btn btn-sm btn-secondary" onclick="showAppsMode('list')">← Back</button><h3 id="apps-keys-title" style="margin:0">API Keys</h3><button class="btn btn-sm btn-primary" onclick="generateKey()">+ Generate New Key</button></div>
+      <div style="overflow-x:auto"><table><thead><tr><th>Name</th><th>Prefix</th><th>Status</th><th>Last Used</th><th>Created</th><th></th></tr></thead><tbody id="apps-keys-body"><tr><td colspan="6" style="text-align:center;color:var(--text-tertiary)">No keys yet</td></tr></tbody></table></div>
+    </div>
+    <div id="key-created-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
+      <div style="background:var(--bg-secondary);padding:2rem;border-radius:12px;max-width:520px;width:90%;border:1px solid var(--border)"><h3 style="margin-bottom:0.5rem">API Key Created</h3><p style="color:#f39c12;font-size:0.85rem;margin-bottom:1rem">⚠ Copy this key now — it will never be shown again.</p><div style="display:flex;gap:0.5rem;margin-bottom:1rem"><input type="text" id="key-created-value" readonly style="flex:1;font-family:monospace;font-size:0.85rem;background:var(--bg-primary);padding:0.75rem;border:1px solid var(--border);border-radius:8px;color:var(--text-primary)"><button class="btn btn-primary" onclick="copyCreatedKey()">Copy</button></div><button class="btn btn-secondary" onclick="closeKeyModal()">Close</button></div>
     </div>
   </div>
 
-  <!-- Tab 2: Bulk Upload -->
+  <!-- Tab: Bulk Upload -->
   <div class="tab-content" id="tab-bulk">
     <div style="display:flex;gap:0.75rem;align-items:flex-end;margin-bottom:1rem">
       <div style="flex:1"><label>Upload JSON file</label><input type="file" id="bulk-file" accept=".json"></div>
@@ -228,29 +205,21 @@
     </div>
   </div>
 
-  <!-- Tab 3: Usage & Cost -->
+  <!-- Tab: Usage & Cost -->
   <div class="tab-content" id="tab-cost">
     <div class="form-row">
       <div><label>From</label><input type="date" id="cost-from"></div>
       <div><label>To</label><input type="date" id="cost-to"></div>
+      <div><label>Application</label><select id="cost-app-filter"><option value="">All</option></select></div>
+      <div><label>API Key</label><select id="cost-key-filter"><option value="">All</option></select></div>
       <div style="display:flex;align-items:flex-end"><button class="btn btn-primary" onclick="loadCostReport()" style="margin-bottom:0.75rem">Search</button></div>
     </div>
     <div class="summary-card"><span class="label">Grand Total</span><span class="value" id="cost-grand-total">Rp 0</span></div>
-    <div style="overflow-x:auto"><table><thead><tr><th>Username</th><th>Display Name</th><th>Group</th><th>Input Tokens</th><th>Output Tokens</th><th>Requests</th><th>Cost</th></tr></thead><tbody id="cost-table-body"><tr><td colspan="7" style="text-align:center;color:var(--text-tertiary)">No data</td></tr></tbody></table></div>
+    <div style="overflow-x:auto"><table><thead><tr><th>Username</th><th>Display Name</th><th>Application</th><th>API Key</th><th>Group</th><th>Input Tokens</th><th>Output Tokens</th><th>Requests</th><th>Cost</th></tr></thead><tbody id="cost-table-body"><tr><td colspan="9" style="text-align:center;color:var(--text-tertiary)">No data</td></tr></tbody></table></div>
     <div class="pagination"><button class="page-btn" id="cost-prev" onclick="loadCostReport(currentPage-1)">← Prev</button><span class="page-info" id="cost-page-info">Page 1</span><button class="page-btn" id="cost-next" onclick="loadCostReport(currentPage+1)">Next →</button></div>
   </div>
 
-  <!-- Tab 4: Account Settings -->
-  <div class="tab-content" id="tab-settings">
-    <div style="max-width:400px">
-      <div class="pwd-wrap"><label>Current Password</label><input type="password" id="set-currentPwd"><button class="pwd-toggle" onclick="togglePwd('set-currentPwd',this)">👁</button></div>
-      <div class="pwd-wrap"><label>New Password (min 6 chars)</label><input type="password" id="set-newPwd"><button class="pwd-toggle" onclick="togglePwd('set-newPwd',this)">👁</button></div>
-      <div class="pwd-wrap"><label>Confirm New Password</label><input type="password" id="set-confirmPwd"></div>
-      <button class="btn btn-primary" onclick="changePassword()">Update Password</button>
-    </div>
-  </div>
-
-  <!-- Tab 5: Config -->
+  <!-- Tab: Config -->
   <div class="tab-content" id="tab-config">
     <h3>Application Configuration</h3>
     <div style="max-width:500px">
@@ -268,7 +237,7 @@
     </div>
   </div>
 
-  <!-- Tab 6: Model Access -->
+  <!-- Tab: Model Access -->
   <div class="tab-content" id="tab-models">
     <h3>Model Access Management</h3>
     <p style="color:var(--text-tertiary);margin-bottom:1rem">Manage which users can access private models. Models with no whitelisted users are public (all users can access).</p>
@@ -595,6 +564,7 @@
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         btn.classList.add('active');
         document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+        if (btn.dataset.tab === 'apps') loadApplications();
         if (btn.dataset.tab === 'models') loadModelAccess();
         if (btn.dataset.tab === 'feedback') { fbPage = 1; loadFeedbackReports(); }
         if (btn.dataset.tab === 'discovered') loadDiscoveredRoles();
@@ -649,69 +619,7 @@
       } catch (e) { showToast(e.message, 'error'); }
     }
 
-    // ─── Tab 1: Single User ──────────────────────────────────────────────────
-    function showSingleMode(mode) {
-      const reg = document.getElementById('su-register');
-      const upd = document.getElementById('su-update');
-      const btnReg = document.getElementById('su-mode-reg');
-      const btnUpd = document.getElementById('su-mode-upd');
-      if (mode === 'register') {
-        reg.style.display = 'block'; upd.style.display = 'none';
-        btnReg.style.background = 'var(--accent)'; btnReg.style.color = '#000';
-        btnUpd.style.background = ''; btnUpd.style.color = '';
-      } else {
-        reg.style.display = 'none'; upd.style.display = 'block';
-        btnUpd.style.background = 'var(--accent)'; btnUpd.style.color = '#000';
-        btnReg.style.background = ''; btnReg.style.color = '';
-      }
-    }
-
-    async function registerSingleUser() {
-      const username = document.getElementById('su-reg-username').value.trim();
-      const displayName = document.getElementById('su-reg-displayName').value.trim();
-      const password = document.getElementById('su-reg-password').value;
-      const role = document.getElementById('su-reg-role').value;
-      const groupName = document.getElementById('su-reg-groupName').value.trim() || undefined;
-      const forcePasswordReset = document.getElementById('su-reg-forceReset').checked;
-      if (!username || !password) return showToast('Username and password required', 'warning');
-      if (password.length < 6) return showToast('Password min 6 characters', 'warning');
-      const body = { username, displayName: displayName || username, password, role, groupName, forcePasswordReset };
-      try {
-        await api(`${API_BASE}/admin/users`, { method: 'POST', body: JSON.stringify(body) });
-        showToast(`User "${username}" created`);
-        document.getElementById('su-reg-username').value = ''; document.getElementById('su-reg-displayName').value = '';
-        document.getElementById('su-reg-groupName').value = ''; document.getElementById('su-reg-password').value = '';
-      } catch (e) { showToast(e.message, 'error'); }
-    }
-
-    async function loadUpdateUser() {
-      const username = document.getElementById('su-upd-username').value.trim();
-      if (!username) return showToast('Enter a username', 'warning');
-      document.getElementById('su-upd-form').style.display = 'block';
-      document.getElementById('su-upd-displayName').value = '';
-      document.getElementById('su-upd-groupName').value = '';
-      document.getElementById('su-upd-role').value = 'user';
-      document.getElementById('su-upd-password').value = '';
-      document.getElementById('su-upd-forceReset').checked = false;
-      showToast(`Editing user: ${username}`, 'success');
-    }
-
-    async function updateSingleUser() {
-      const username = document.getElementById('su-upd-username').value.trim();
-      const body = {};
-      const dn = document.getElementById('su-upd-displayName').value.trim(); if (dn) body.displayName = dn;
-      const gn = document.getElementById('su-upd-groupName').value.trim();
-      body.groupName = gn || null;
-      body.role = document.getElementById('su-upd-role').value;
-      const pwd = document.getElementById('su-upd-password').value; if (pwd) body.password = pwd;
-      body.forcePasswordReset = document.getElementById('su-upd-forceReset').checked;
-      try {
-        await api(`${API_BASE}/admin/users/${encodeURIComponent(username)}`, { method: 'PUT', body: JSON.stringify(body) });
-        showToast(`User "${username}" updated`);
-      } catch (e) { showToast(e.message, 'error'); }
-    }
-
-    // ─── Tab 2: Bulk Upload ──────────────────────────────────────────────────
+    // ─── Tab: Bulk Upload ──────────────────────────────────────────────────
     let bulkData = [];
 
     function downloadTemplate() {
@@ -806,8 +714,13 @@
       currentPage = page;
       const from = document.getElementById('cost-from').value;
       const to = document.getElementById('cost-to').value;
+      const appFilter = document.getElementById('cost-app-filter').value;
+      const keyFilter = document.getElementById('cost-key-filter').value;
+      let url = `${API_BASE}/admin/usage/cost?from=${from}&to=${to}&page=${page}&pageSize=20`;
+      if (appFilter) url += '&applicationId=' + encodeURIComponent(appFilter);
+      if (keyFilter) url += '&apiKeyId=' + encodeURIComponent(keyFilter);
       try {
-        const data = await api(`${API_BASE}/admin/usage/cost?from=${from}&to=${to}&page=${page}&pageSize=20`);
+        const data = await api(url);
         lastCostResponse = data;
         // Grand total
         const gt = data.grandTotal;
@@ -820,11 +733,11 @@
         // Table
         const tbody = document.getElementById('cost-table-body'); tbody.innerHTML = '';
         if (!data.users || !data.users.length) {
-          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-tertiary)">No data</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-tertiary)">No data</td></tr>';
         } else {
           data.users.forEach(u => {
             const cost = rate ? `Rp ${(u.estimatedCostUsd * rate).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : `$${(u.estimatedCostUsd || 0).toFixed(6)}`;
-            tbody.innerHTML += `<tr><td>${esc(u.username)}</td><td>${esc(u.displayName)}</td><td>${esc(u.groupName)}</td><td>${(u.totalInputTokens || 0).toLocaleString()}</td><td>${(u.totalOutputTokens || 0).toLocaleString()}</td><td>${u.requestCount || 0}</td><td>${cost}</td></tr>`;
+            tbody.innerHTML += `<tr><td>${esc(u.username)}</td><td>${esc(u.displayName)}</td><td>${esc(u.applicationName || '—')}</td><td>${esc(u.keyPrefix || '—')}</td><td>${esc(u.groupName)}</td><td>${(u.totalInputTokens || 0).toLocaleString()}</td><td>${(u.totalOutputTokens || 0).toLocaleString()}</td><td>${u.requestCount || 0}</td><td>${cost}</td></tr>`;
           });
         }
         document.getElementById('cost-page-info').textContent = `Page ${data.page} of ${Math.ceil(data.total / data.pageSize)}`;
@@ -833,29 +746,7 @@
       } catch (e) { showToast(e.message, 'error'); }
     }
 
-    // ─── Tab 4: Account Settings ──────────────────────────────────────────────
-    async function changePassword() {
-      const current = document.getElementById('set-currentPwd').value;
-      const newPwd = document.getElementById('set-newPwd').value;
-      const confirm = document.getElementById('set-confirmPwd').value;
-      if (!current || !newPwd) return showToast('Fill all fields', 'warning');
-      if (newPwd.length < 6) return showToast('Password must be at least 6 characters', 'warning');
-      if (newPwd !== confirm) return showToast('Passwords do not match', 'error');
-      try {
-        const result = await api(`${API_BASE}/auth/change-password`, {
-          method: 'POST',
-          body: JSON.stringify({ currentPassword: current, newPassword: newPwd })
-        });
-        showToast('Password changed successfully');
-        document.getElementById('set-currentPwd').value = '';
-        document.getElementById('set-newPwd').value = '';
-        document.getElementById('set-confirmPwd').value = '';
-        // Update stored token
-        if (result.token) sessionStorage.setItem('admin_token', result.token);
-      } catch (e) { showToast(e.message, 'error'); }
-    }
-
-    // ─── Tab 5: Config ──────────────────────────────────────────────
+    // ─── Tab: Config ──────────────────────────────────────────────
     async function loadConfig() {
       const statusEl = document.getElementById('passthrough-status');
       const toggle = document.getElementById('passthrough-toggle');
@@ -888,6 +779,137 @@
         statusEl.textContent = 'Failed: ' + e.message;
         showToast('Failed to update config', 'error');
       }
+    }
+
+    // ─── Applications & API Keys ────────────────────────────────────────────
+    let appsMode = 'list';
+    let appsEditingId = null;
+    let appsViewingAppId = null;
+
+    async function loadApplications() {
+      const tbody = document.getElementById('apps-table-body');
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr>';
+      try {
+        const data = await api(API_BASE + '/admin/applications');
+        const apps = data.applications || [];
+        const appFilter = document.getElementById('cost-app-filter');
+        appFilter.innerHTML = '<option value="">All</option>' + apps.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
+        if (!apps.length) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-tertiary)">No applications yet</td></tr>';
+          return;
+        }
+        tbody.innerHTML = apps.map(a => `<tr>
+          <td><strong>${esc(a.name)}</strong></td>
+          <td>${a.billing_mode === 'PER_USER' ? '👤 Per User' : '📊 Per App'}</td>
+          <td>${a.is_active ? '<span style="color:#2ecc71">Active</span>' : '<span style="color:#e74c3c">Inactive</span>'}</td>
+          <td>${a.key_count ?? 0}</td>
+          <td>${new Date(a.created_at).toLocaleDateString()}</td>
+          <td>
+            <button class="btn btn-sm btn-secondary" onclick="viewKeys('${a.id}','${esc(a.name)}')">Keys</button>
+            <button class="btn btn-sm btn-secondary" onclick="editApp('${a.id}')">Edit</button>
+            <button class="btn btn-sm" style="background:var(--error);color:#fff" onclick="deleteApp('${a.id}','${esc(a.name)}')">×</button>
+          </td></tr>`).join('');
+      } catch (e) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--accent)">Error loading</td></tr>'; }
+    }
+
+    function showAppsMode(mode) {
+      appsMode = mode;
+      document.getElementById('apps-list-view').style.display = mode === 'list' ? 'block' : 'none';
+      document.getElementById('apps-form-view').style.display = mode === 'new' || mode === 'edit' ? 'block' : 'none';
+      document.getElementById('apps-keys-view').style.display = mode === 'keys' ? 'block' : 'none';
+      document.getElementById('apps-mode-list').style.background = mode === 'list' ? 'var(--accent)' : '';
+      document.getElementById('apps-mode-new').style.background = mode === 'new' ? 'var(--accent)' : '';
+      if (mode === 'list') loadApplications();
+      if (mode === 'new') { document.getElementById('app-form-name').value = ''; document.getElementById('app-form-edit-id').value = ''; appsEditingId = null; }
+    }
+
+    function editApp(id) {
+      appsEditingId = id;
+      api(API_BASE + '/admin/applications/' + id).then(app => {
+        document.getElementById('app-form-name').value = app.name;
+        document.getElementById('app-form-billing').value = app.billing_mode;
+        document.getElementById('app-form-edit-id').value = app.id;
+        showAppsMode('edit');
+      }).catch(e => showToast(e.message, 'error'));
+    }
+
+    async function saveApplication() {
+      const name = document.getElementById('app-form-name').value.trim();
+      const billingMode = document.getElementById('app-form-billing').value;
+      const editId = document.getElementById('app-form-edit-id').value;
+      if (!name) return showToast('Name required', 'warning');
+      try {
+        if (editId) {
+          await api(API_BASE + '/admin/applications/' + editId, { method: 'PUT', body: JSON.stringify({ name, billingMode }) });
+          showToast('Application updated');
+        } else {
+          await api(API_BASE + '/admin/applications', { method: 'POST', body: JSON.stringify({ name, billingMode, createdBy: sessionStorage.getItem('admin_role') === 'admin' ? 'admin' : '' }) });
+          showToast('Application created');
+        }
+        showAppsMode('list');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function deleteApp(id, name) {
+      if (!confirm('Delete application "' + name + '" and all its API keys? This cannot be undone.')) return;
+      try { await api(API_BASE + '/admin/applications/' + id, { method: 'DELETE' }); showToast('Application deleted'); loadApplications(); }
+      catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function viewKeys(appId, appName) {
+      appsViewingAppId = appId;
+      document.getElementById('apps-keys-title').textContent = 'Keys: ' + appName;
+      showAppsMode('keys');
+      const tbody = document.getElementById('apps-keys-body');
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr>';
+      try {
+        const data = await api(API_BASE + '/admin/applications/' + appId + '/keys');
+        const keys = data.keys || [];
+        const keyFilter = document.getElementById('cost-key-filter');
+        keyFilter.innerHTML = '<option value="">All</option>' + keys.map(k => `<option value="${k.id}">${esc(k.key_prefix)} (${esc(k.name)})</option>`).join('');
+        if (!keys.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-tertiary)">No keys yet</td></tr>'; return; }
+        tbody.innerHTML = keys.map(k => `<tr>
+          <td>${esc(k.name)}</td>
+          <td><code>${esc(k.key_prefix)}</code></td>
+          <td>${k.is_active ? '<span style="color:#2ecc71">Active</span>' : '<span style="color:#e74c3c">Inactive</span>'}</td>
+          <td>${k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : '—'}</td>
+          <td>${new Date(k.created_at).toLocaleDateString()}</td>
+          <td>
+            ${k.is_active ? `<button class="btn btn-sm btn-secondary" onclick="deactivateKey('${k.id}')">Deactivate</button>` : ''}
+            <button class="btn btn-sm" style="background:var(--error);color:#fff" onclick="deleteApiKey('${k.id}')">×</button>
+          </td></tr>`).join('');
+      } catch (e) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--accent)">Error loading keys</td></tr>'; }
+    }
+
+    async function generateKey() {
+      const name = prompt('Key name (e.g. Production, Staging):');
+      if (!name || !name.trim()) return;
+      try {
+        const data = await api(API_BASE + '/admin/applications/' + appsViewingAppId + '/keys', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+        document.getElementById('key-created-value').value = data.key;
+        document.getElementById('key-created-modal').style.display = 'flex';
+        viewKeys(appsViewingAppId, '');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    function copyCreatedKey() {
+      const el = document.getElementById('key-created-value');
+      el.select(); document.execCommand('copy');
+      showToast('Key copied to clipboard');
+    }
+
+    function closeKeyModal() { document.getElementById('key-created-modal').style.display = 'none'; }
+
+    async function deactivateKey(id) {
+      if (!confirm('Deactivate this key? Requests will be rejected immediately.')) return;
+      try { await api(API_BASE + '/admin/keys/' + id, { method: 'PUT' }); showToast('Key deactivated'); viewKeys(appsViewingAppId, ''); }
+      catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function deleteApiKey(id) {
+      if (!confirm('Permanently delete this key?')) return;
+      try { await api(API_BASE + '/admin/keys/' + id, { method: 'DELETE' }); showToast('Key deleted'); viewKeys(appsViewingAppId, ''); }
+      catch (e) { showToast(e.message, 'error'); }
     }
 
     // Load cost report + config on first render
