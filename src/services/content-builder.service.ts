@@ -1,4 +1,4 @@
-import { ImageContentBlock, ContentBuildInput, ContentBlock } from '../types/upload.types.js';
+import { ContentBuildInput, ContentBlock } from '../types/upload.types.js';
 
 /**
  * Build ordered content blocks for Bedrock Converse API.

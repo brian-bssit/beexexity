@@ -4,7 +4,7 @@ import { bedrockClient } from '../services/inference.service.js';
 import { authMiddleware } from '../middleware/auth.middleware.js';
 import { adminMiddleware } from '../middleware/admin.middleware.js';
 import { query } from '../config/database.js';
-import { config } from '../config/index.js';
+
 import type { ErrorResponse } from '../types/error.types.js';
 
 const router = Router();

@@ -42,7 +42,7 @@ router.post('/login', loginRateLimit, async (req: Request, res: Response): Promi
   try {
     const result = await login(username, password);
     res.status(200).json(result);
-  } catch (err: unknown) {
+  } catch {
     // Auth errors are opaque — never reveal which credential was wrong
     const error: ErrorResponse = {
       error: 'INVALID_CREDENTIALS',

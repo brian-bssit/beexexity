@@ -235,7 +235,7 @@ router.post('/users/bulk', async (req: Request, res: Response): Promise<void> =>
   // Process sequentially (not parallel) to avoid DB write contention
   for (const entry of entries) {
     try {
-      const { action, user } = await upsertUser({
+      const { action } = await upsertUser({
         username: entry.username,
         displayName: entry.displayName || entry.username,
         groupName: entry.groupName || undefined,

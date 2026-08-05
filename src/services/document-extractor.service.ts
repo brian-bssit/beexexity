@@ -28,7 +28,7 @@ import mammoth from 'mammoth';
 import { DocumentFile, ExtractionResult } from '../types/upload.types.js';
 import { config } from '../config/index.js';
 import { assertValidFileSignature } from './file-signature-validator.js';
-import { convertViaGotenberg } from './gotenberg.service.js';
+
 
 // ─── ESM-Compatible Dynamic Imports ─────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ export async function extractPdfText(buffer: Buffer, filename: string): Promise<
       confidence,
       format: 'pdf',
     };
-  } catch (error) {
+  } catch {
     throw new Error(`Could not extract text from '${filename}'. File may be corrupted.`);
   } finally {
     if (parser) await parser.destroy();
@@ -157,7 +157,7 @@ export async function extractDocxText(buffer: Buffer, filename: string): Promise
       confidence,
       format: 'docx',
     };
-  } catch (error) {
+  } catch {
     throw new Error(`Could not extract text from '${filename}'. File may be corrupted.`);
   }
 }
@@ -223,7 +223,7 @@ export async function extractXlsxText(buffer: Buffer, filename: string): Promise
       confidence: 'high',
       format: 'xlsx',
     };
-  } catch (error) {
+  } catch {
     throw new Error(`Could not extract text from '${filename}'. File may be corrupted or is not a valid spreadsheet.`);
   }
 }
@@ -258,7 +258,7 @@ export async function extractPptxText(buffer: Buffer, filename: string): Promise
       confidence,
       format: 'pptx',
     };
-  } catch (error) {
+  } catch {
     throw new Error(`Could not extract text from '${filename}'. File may be corrupted or is not a valid PPTX.`);
   }
 }

@@ -8,7 +8,7 @@
  * @see docs/feature-sequential-reasoning/
  */
 
-import { ConverseCommand, ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
+import { ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { bedrockClient } from './inference.service.js';
 import { mask } from './pii-masker.service.js';
 import { auditService } from './audit.service.js';
@@ -299,7 +299,7 @@ User request: ${input.refinedPrompt}`;
       clearTimeout(timeout);
 
       const text = response.output?.message?.content?.[0]?.text ?? '';
-      const plan = this.parsePlan(text, modelId, isLargeDoc);
+      const plan = this.parsePlan(text, modelId);
 
       if (!plan || plan.steps.length < 2) {
         console.warn('[seq-reasoning] Planner: invalid/empty plan');
@@ -314,7 +314,7 @@ User request: ${input.refinedPrompt}`;
   }
 
   /** Parse planner LLM response into SequentialPlan. */
-  private parsePlan(text: string, defaultModelId: string, isLargeDoc: boolean): SequentialPlan | null {
+  private parsePlan(text: string, defaultModelId: string): SequentialPlan | null {
     try {
       // Find JSON block in response
       const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -390,7 +390,7 @@ User request: ${input.refinedPrompt}`;
     plan: SequentialPlan,
     accumulatedContext: string,
     stepResults: StepResult[],
-    res: Response,
+    _res: Response,
   ): Promise<string> {
     const completedCount = stepResults.filter(r => r.status === 'success').length;
     const skippedSteps = stepResults.filter(r => r.status === 'failed' || r.status === 'skipped')
@@ -415,7 +415,7 @@ User request: ${input.refinedPrompt}`;
 
       synthPrompt = `You are answering the user based on step-by-step analysis findings.
 
-User\'s original request:
+User's original request:
 ${input.refinedPrompt}
 
 Completed steps: ${completedCount}/${stepResults.length}
@@ -424,7 +424,7 @@ ${gaps}
 Step findings:
 ${accumulatedContext}
 
-Produce a focused response that answers the user\'s request directly. Use the findings as evidence.${formatInstruction}`;
+Produce a focused response that answers the user's request directly. Use the findings as evidence.${formatInstruction}`;
     }
 
     const modelId = this.resolveModel(input.routingDecision);
@@ -446,6 +446,7 @@ Produce a focused response that answers the user\'s request directly. Use the fi
       });
 
       const response = await bedrockClient.send(command, { abortSignal: controller.signal });
+      clearTimeout(timeout);
       return response.output?.message?.content?.[0]?.text ?? (accumulatedContext || input.refinedPrompt);
     } catch (err: unknown) {
       console.error('[seq-reasoning] Synthesizer error:', err instanceof Error ? err.message : String(err));
@@ -541,7 +542,7 @@ export function stripMarkdownArtifacts(text: string, skill?: string): string {
   // Skip cleanup for code-related skills
   if (skill === 'code' || skill === 'log_troubleshooting') return text;
 
-  let cleaned = text
+  const cleaned = text
     // Preserve section structure: convert markdown headings to bold
     .replace(/^#{1,6}\s+(.+)$/gm, '**$1**')
     // Remove horizontal rules

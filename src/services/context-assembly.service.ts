@@ -102,7 +102,7 @@ export function buildContext(
   // Step 3: Drop oldest messages one-by-one if total chars exceed budget.
   // Evicted messages are tracked for potential summary refresh.
   const evictedMessages: StoredMessage[] = [];
-  let historyMessages = [...windowedMessages];
+  const historyMessages = [...windowedMessages];
   while (historyMessages.length > 0) {
     const totalChars =
       historyMessages.reduce((sum, msg) => sum + msg.sanitizedContent.length, 0) +

@@ -14,7 +14,7 @@ import { ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { bedrockClient } from './inference.service.js';
 import { htmlToPptxViaGotenberg, htmlToPdfViaGotenberg } from './gotenberg.service.js';
 import { PPTX_THEMES_CSS, VALID_THEMES, VALID_LAYOUTS } from './pptx-themes.js';
-import type { ContentJson, GeneratePptxResponse, Bullet } from '../types/pptx.types.js';
+import type { ContentJson, GeneratePptxResponse } from '../types/pptx.types.js';
 
 // ═══════════════════════════════════════════════
 //  System Prompts

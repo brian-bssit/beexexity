@@ -5,7 +5,6 @@ import { query } from '../config/database.js';
 import { config } from '../config/index.js';
 import {
   BulkUserEntry,
-  BulkItemResult,
   ChangePasswordResult,
   CreateUserDto,
   LoginResult,

@@ -15,6 +15,16 @@ vi.mock('../../src/middleware/auth.middleware.js', () => ({
     };
     next();
   }),
+  apiKeyAuthMiddleware: vi.fn((req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    req.user = {
+      sub: 'user-123',
+      username: 'testuser',
+      role: 'user' as const,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    };
+    next();
+  }),
 }));
 
 vi.mock('../../src/middleware/password-reset.middleware.js', () => ({

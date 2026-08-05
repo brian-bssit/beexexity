@@ -4,7 +4,7 @@ import { forcePasswordResetMiddleware } from '../middleware/password-reset.middl
 import { inferenceRateLimit } from '../middleware/security.middleware.js';
 import { uploadMiddleware, multerErrorHandler } from '../middleware/upload.middleware.js';
 import { mask } from '../services/pii-masker.service.js';
-import { validateModelId, generate, generateNonStreaming, invokeNovaForOCR, repairResponse, semanticJudge, InferenceError } from '../services/inference.service.js';
+import { validateModelId, generate, invokeNovaForOCR, repairResponse, semanticJudge, InferenceError } from '../services/inference.service.js';
 import { validateAndClassifyFiles } from '../services/upload-validator.service.js';
 import { supportsImages, getVisionModels } from '../config/model-capabilities.js';
 import { extractDocumentText } from '../services/document-extractor.service.js';
@@ -539,7 +539,7 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
 
     let executedModelId: string = validatedModelId;
     let effectivePrompt: string = maskedPrompt;
-    let isPassthrough = routingState === 'passthrough';
+    const isPassthrough = routingState === 'passthrough';
 
     // Construct routing decision once, used in both auto and manual paths below
     let routingDecision: RoutingDecision | undefined;

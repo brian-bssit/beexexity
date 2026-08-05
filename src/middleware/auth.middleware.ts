@@ -7,11 +7,9 @@ import { config } from '../config/index.js';
 /**
  * Extend Express Request to include the decoded user payload.
  */
-declare global {
-  namespace Express {
-    interface Request {
-      user?: TokenPayload;
-    }
+declare module 'express' {
+  interface Request {
+    user?: TokenPayload;
   }
 }
 

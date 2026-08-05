@@ -10,7 +10,7 @@
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join } from 'node:path';
 import pg from 'pg';
 import { config } from '../config/index.js';
 

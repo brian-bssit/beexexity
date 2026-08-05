@@ -56,6 +56,11 @@ const mockPricingConfig = {
       inputPricePer1MTokens: 1.20,
       outputPricePer1MTokens: 3.84,
     },
+    'deepseek.v3.2': {
+      displayName: 'DeepSeek V3.2',
+      inputPricePer1MTokens: 0.74,
+      outputPricePer1MTokens: 2.22,
+    },
   },
 };
 
@@ -96,8 +101,8 @@ describe('GET /api/v1/models', () => {
     expect(jsonSpy).toHaveBeenCalledOnce();
     const response = jsonSpy.mock.calls[0][0];
 
-    // Should have 6 models (4 original + 2 new)
-    expect(response.models).toHaveLength(6);
+    // Should have 7 models
+    expect(response.models).toHaveLength(7);
 
     // Should include all allowed models
     const modelIds = response.models.map((m: { modelId: string }) => m.modelId);
@@ -209,8 +214,8 @@ describe('GET /api/v1/models', () => {
 
     const response = jsonSpy.mock.calls[0][0];
 
-    // Should still return all models (6 total with 2 new)
-    expect(response.models).toHaveLength(6);
+    // Should still return all models
+    expect(response.models).toHaveLength(7);
 
     // Should fall back to modelId as displayName
     for (const model of response.models) {
