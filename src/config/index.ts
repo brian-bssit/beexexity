@@ -123,4 +123,22 @@ export const config = {
     maxContextCharacters: parseInt(process.env.MAX_CONTEXT_CHARACTERS || '640000', 10),
     listPageSize: parseInt(process.env.SESSION_LIST_PAGE_SIZE || '50', 10),
   },
+  knowledge: {
+    /** Embedding model (Bedrock Titan Embeddings v2, 1024 dims). */
+    embeddingModel: 'amazon.titan-embed-text-v2:0',
+    /** Embedding dimensions (matches migration 024 VECTOR(1024)). */
+    embeddingDimensions: 1024,
+    /** Timeout per embedding call. */
+    embeddingTimeoutMs: parseInt(process.env.EMBEDDING_TIMEOUT_MS || '2000', 10),
+    /** Timeout for knowledge retrieval during inference. */
+    searchTimeoutMs: parseInt(process.env.KNOWLEDGE_SEARCH_TIMEOUT_MS || '2000', 10),
+    /** Chunk size in tokens (~4 chars per token). */
+    chunkSizeTokens: parseInt(process.env.KNOWLEDGE_CHUNK_SIZE || '1000', 10),
+    /** Chunk overlap in tokens. */
+    chunkOverlapTokens: parseInt(process.env.KNOWLEDGE_CHUNK_OVERLAP || '100', 10),
+    /** Below this cosine score, semantic results are considered noise → keyword fallback. */
+    hybridThreshold: parseFloat(process.env.KNOWLEDGE_HYBRID_THRESHOLD || '0.4'),
+    /** Below this score, results are not injected into the prompt. */
+    minRelevanceScore: parseFloat(process.env.KNOWLEDGE_MIN_SCORE || '0.3'),
+  },
 } as const;

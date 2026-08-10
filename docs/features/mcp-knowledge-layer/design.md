@@ -61,7 +61,7 @@ pgvector (IVFflat index, cosine similarity)
 ```
 generateEmbedding(text: string) → Float32Array  // single text → 1024d vector
   // InvokeModel: amazon.titan-embed-text-v2:0
-  // max input: 8000 chars, normalized output
+  // max input: 8000 tokens, normalized output
   // throws on dimension mismatch or empty response
 
 embeddingToSql(emb: Float32Array) → string       // [0.1,0.2,...] for pgvector
@@ -77,7 +77,7 @@ indexDocument(params: {
   domain?: string[], sensitivity?: string, jurisdiction?: string[],
   sourceType?: string, bindingLevel?: string
 }) → { id: string, chunkIndex: number }
-  // Chunk content if >8000 chars → recursive split
+  // Chunk content if > maxChunkSize (1000 tokens) → recursive split
   // Generate embedding per chunk
   // INSERT with dedup check (content_hash)
   // Stores full metadata JSONB: core fields + classification tags + source tags
@@ -137,6 +137,9 @@ if (knowledgeContext.length > 0) {
 }
 ```
 
+#### `src/services/audit.service.ts`
+Record `knowledge_document_ids` (chunk yang digunakan saat retrieval) ke `audit_logs.knowledge_sources JSONB` — setiap jawaban dapat di-trace kembali ke dokumen sumber (Req 6.5).
+
 ---
 
 ## Data Models
@@ -153,7 +156,7 @@ CREATE TABLE knowledge_documents (
     title VARCHAR(512),
     chunk_index INTEGER NOT NULL DEFAULT 0,
     content TEXT NOT NULL,
-    content_hash VARCHAR(64) NOT NULL,
+    content_hash VARCHAR(16) NOT NULL,
     embedding VECTOR(1024),
     metadata JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -163,6 +166,13 @@ CREATE INDEX idx_kd_content_hash ON knowledge_documents(content_hash);
 CREATE INDEX idx_kd_embedding ON knowledge_documents
     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 CREATE INDEX idx_kd_doc_type ON knowledge_documents(doc_type, created_at DESC);
+```
+
+### Migration 025 — audit traceability
+
+```sql
+ALTER TABLE audit_logs
+    ADD COLUMN IF NOT EXISTS knowledge_sources JSONB;
 ```
 
 ### Chunking Algorithm
@@ -182,7 +192,7 @@ RecursiveTextSplitter:
 |:---|:---|
 | Titan Embeddings timeout (>2s) | Retry 1x, lalu throw — caller (ingest: abort, search: return empty) |
 | pgvector query error | Log error, return `[]` — graceful degradation |
-| Document >8000 chars | Auto-chunk via recursive splitter sebelum embed |
+| Document > maxChunkSize (1000 tokens) | Auto-chunk via recursive splitter sebelum embed |
 | Content hash collision (dedup) | Skip insert, log `[knowledge] Skipped duplicate: {title} chunk {n}` |
 | `knowledge.service.search()` called during inference | Timeout 2s. Jika timeout → return `[]`, inference lanjut tanpa context |
 | Metadata missing required fields (title, doc_type) | Reject ingestion entry, log warning, continue ke file berikutnya |
@@ -196,7 +206,7 @@ RecursiveTextSplitter:
 
 2. **Hybrid search.** Cosine untuk semantic similarity, ILIKE untuk keyword eksak (penting untuk query regulasi seperti "Pasal 22 UU PDP"). Threshold 0.4 — di bawah itu hasil dianggap noise dan tidak di-inject.
 
-3. **Embedding model: Titan v2, bukan Cohere.** Sudah dalam ekosistem Bedrock ap-southeast-3. Latency <100ms. Tidak perlu API key tambahan.
+3. **Embedding model: Titan v2, bukan Cohere.** Sudah dalam ekosistem Bedrock ap-southeast-3. Latency di bawah target <200ms (Req 2.4). Tidak perlu API key tambahan.
 
 4. **Citation mandatory dari prompt, bukan post-processing.** Lebih murah dan lebih akurat — model yang memutuskan kapan merujuk, bukan regex. Instruksi sitasi di system prompt, bukan di output parser.
 
