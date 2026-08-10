@@ -42,8 +42,8 @@
 
 ## Phase 4 — Production Readiness
 
-- [ ] **4.1** Run full test suite: `npm test`. Semua test harus pass. [All Req]
-- [ ] **4.2** Linter: `npx eslint src/ tests/`. Zero errors pada file baru. [All Req]
-- [ ] **4.3** Type-check: `npx tsc --noEmit`. Zero errors. [All Req]
-- [ ] **4.4** Deploy migrations 024 & 025 ke staging: `npx tsx src/scripts/run-migrations.ts` via Cloud Run.
-- [ ] **4.5** Ingest korpus awal (5-10 dokumen) ke staging → verifikasi retrieval berfungsi di environment staging.
+- [x] **4.1** Run full test suite: `npm test`. Semua test harus pass. [All Req] — **430/430 pass**
+- [x] **4.2** Linter: `npx eslint src/ tests/`. Zero errors pada file baru. [All Req] — **0 errors file baru**
+- [x] **4.3** Type-check: `npx tsc --noEmit`. Zero errors. [All Req]
+- [ ] **4.4** Deploy migrations 024 & 025 ke staging: `npx tsx src/scripts/run-migrations.ts` via Cloud Run. — **menunggu env staging**
+- [ ] **4.5** Ingest korpus awal (5-10 dokumen) ke staging → verifikasi retrieval berfungsi di environment staging. — **menunggu env staging**
