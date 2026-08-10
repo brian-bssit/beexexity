@@ -30,11 +30,11 @@
 
 ## Phase 3 — Retrieval Integration
 
-- [ ] **3.1** Update `context-assembly.service.ts` — inject retrieval results ke system prompt setelah behavioral instructions. [Req 3]
-- [ ] **3.2** Add citation instruction ke system prompt: "If you use information from reference documents, cite as [Sumber: {title}, {section}]." [Req 3.4]
-- [ ] **3.3** Add 2s timeout wrapper di `knowledge.service.search()` untuk inference path. [Req 5]
-- [ ] **3.4** `tests/unit/context-assembly.test.ts` — test context injection dengan dan tanpa retrieval results.
-- [ ] **3.5** Update `audit.service.ts` — catat `knowledge_document_ids` (chunk yang digunakan) ke `audit_logs.knowledge_sources`. [Req 6]
+- [x] **3.1** Update `context-assembly.service.ts` — `buildKnowledgeSection()` + inject retrieval results ke system prompt setelah behavioral instructions (di `inference.routes.ts`). [Req 3]
+- [x] **3.2** Add citation instruction ke system prompt: "If you use information from reference documents, cite as [Sumber: {title}, {section}]." [Req 3.4]
+- [x] **3.3** Add 2s timeout wrapper di `knowledge.service.search()` untuk inference path. [Req 5] (sudah di Phase 1)
+- [x] **3.4** `tests/unit/context-assembly.service.test.ts` — test `buildKnowledgeSection` dengan dan tanpa retrieval results.
+- [x] **3.5** Update `audit.service.ts` — catat `knowledgeSourceIds` (chunk yang digunakan) ke `audit_logs.knowledge_sources`. [Req 6]
 
 **Checkpoint — `npm test` & `npm run lint` harus pass. Prompt dengan keyword dari dokumen ter-index harus mengembalikan response dengan sitasi.**
 

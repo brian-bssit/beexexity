@@ -24,8 +24,9 @@ import {
   SessionExpiredError,
   SessionNotFoundError,
 } from '../services/session.service.js';
-import { buildContext } from '../services/context-assembly.service.js';
+import { buildContext, buildKnowledgeSection } from '../services/context-assembly.service.js';
 import type { ContextConfig } from '../services/context-assembly.service.js';
+import { search as knowledgeSearch } from '../services/knowledge.service.js';
 import { tryAcquireSessionLock } from '../config/database.js';
 import { loadMemoryState, summarizeEvicted, extractFacts } from '../services/session-memory.service.js';
 import { getFewShotExamples } from '../services/few-shot-library.js';
@@ -712,6 +713,9 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
       conversationMessages = [...inferenceMessages, ...fewShotPairs, currentUserMessage];
     }
 
+    // Knowledge retrieval (Tier 2) — hybrid search with self-timeout; degrades to [] on failure.
+    const knowledgeChunks = await knowledgeSearch(effectivePrompt, config.knowledge.topK);
+
     const passthroughRole = 'a helpful assistant';
     const conversationRequest: ConversationInferenceRequest = {
       messages: conversationMessages,
@@ -753,6 +757,10 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
 
         // Append behavioral instructions if present
         if (bi) s += '\n\n' + bi;
+
+        // Knowledge Layer: inject retrieved reference documents + citation rule.
+        const knowledgeSection = buildKnowledgeSection(knowledgeChunks);
+        if (knowledgeSection) s += '\n\n' + knowledgeSection;
 
         // Grounding: prevent hallucination by anchoring to provided context
         s += '\n\nIf the user provides documents or data, base your answer strictly on that material. If asked about something not covered in the provided information, say "Informasi ini tidak tersedia dalam dokumen yang diberikan" instead of guessing. For facts, numbers, and regulations, do not fabricate — state your uncertainty if unsure.';
@@ -933,6 +941,7 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         routingContext: routingDecision?.contract?.context,
         routingIntent: routingDecision?.contract?.intent,
         sessionContext: routingDecision?.sessionContext,
+        knowledgeSourceIds: knowledgeChunks.map((c) => c.id),
       }).catch(() => { /* fire-and-forget */ });
 
       // 14. Memory update if messages were evicted (fire-and-forget)

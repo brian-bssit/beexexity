@@ -77,6 +77,7 @@ describe('AuditService', () => {
           null, // apiKeyId
           null, // applicationId
           false, // passthrough
+          null, // knowledgeSourceIds (not provided → null)
         ],
       );
     });
@@ -166,7 +167,7 @@ describe('AuditService', () => {
 
       // Verify the params array only contains the expected metadata fields
       const params = mockedQuery.mock.calls[0][1] as unknown[];
-      expect(params).toHaveLength(40);
+      expect(params).toHaveLength(41);
       expect(params).toEqual([
         validEntry.timestamp,
         validEntry.userId,
@@ -208,6 +209,7 @@ describe('AuditService', () => {
         null, // apiKeyId
         null, // applicationId
         false, // passthrough
+        null, // knowledgeSourceIds (not provided → null)
       ]);
     });
 

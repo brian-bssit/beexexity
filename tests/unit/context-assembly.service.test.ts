@@ -10,6 +10,7 @@ import {
   assembleContext,
   estimateTokens,
   buildContext,
+  buildKnowledgeSection,
 } from '../../src/services/context-assembly.service.js';
 import type {
   ContextConfig,
@@ -414,5 +415,38 @@ describe('buildContext', () => {
     expect(firstMsg).toContain('[Extracted facts:');
     expect(firstMsg).toContain('deadline=Sep 30');
     expect(firstMsg).not.toContain('Previous conversation summary');
+  });
+});
+
+describe('buildKnowledgeSection', () => {
+  const chunk = (over: Partial<{ id: string; title: string; content: string; docType: string }>) => ({
+    id: over.id ?? 'c1',
+    title: over.title ?? 'SOP Pengajuan Kredit',
+    content: over.content ?? 'Nasabah mengisi formulir pengajuan.',
+    docType: over.docType ?? 'SOP',
+    score: 0.82,
+    bindingLevel: 'regulatory',
+    sourceType: 'internal',
+    metadata: null,
+  });
+
+  it('returns empty string for no chunks (injection is a no-op)', () => {
+    expect(buildKnowledgeSection([])).toBe('');
+  });
+
+  it('wraps chunks with [Sumber: {title}] and adds citation rule', () => {
+    const section = buildKnowledgeSection([chunk({})]);
+    expect(section).toContain('[Reference documents]');
+    expect(section).toContain('[Sumber: SOP Pengajuan Kredit]');
+    expect(section).toContain('Nasabah mengisi formulir pengajuan.');
+    expect(section).toContain('cite as [Sumber: {title}, {section}]');
+  });
+
+  it('separates multiple chunks and preserves ordering', () => {
+    const section = buildKnowledgeSection([chunk({}), chunk({ title: 'MEMO Data', content: 'Retensi 5 tahun.' })]);
+    const idxFirst = section.indexOf('[Sumber: SOP Pengajuan Kredit]');
+    const idxSecond = section.indexOf('[Sumber: MEMO Data]');
+    expect(idxFirst).toBeGreaterThan(-1);
+    expect(idxSecond).toBeGreaterThan(idxFirst);
   });
 });

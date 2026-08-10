@@ -15,6 +15,7 @@ import type {
   AssembledContext,
   BedrockMessage,
 } from '../types/session.types.js';
+import type { KnowledgeChunk } from '../types/knowledge.types.js';
 
 // ─── New Interfaces ────────────────────────────────────────────────────────────
 
@@ -183,6 +184,29 @@ export function buildContext(
     historyMessageCount: historyMessages.length,
     evictedMessages,
   };
+}
+
+// ─── Knowledge Injection (Tier 2) ──────────────────────────────────────────────
+
+/**
+ * Format retrieved knowledge chunks into a system-prompt section with a citation rule.
+ * Empty array → empty string (injection is a no-op when no knowledge was retrieved).
+ *
+ * @param chunks - Retrieved knowledge chunks, best-ranked first
+ * @returns Markdown section to append to the system prompt, or '' if empty
+ */
+export function buildKnowledgeSection(chunks: KnowledgeChunk[]): string {
+  if (chunks.length === 0) return '';
+
+  const blocks = chunks
+    .map((c) => `[Sumber: ${c.title}]\n${c.content}`)
+    .join('\n\n');
+
+  return [
+    '[Reference documents]',
+    blocks,
+    'If you use information from reference documents, cite as [Sumber: {title}, {section}].',
+  ].join('\n\n');
 }
 
 // ─── Legacy Functions (kept for backwards compatibility) ───────────────────────

@@ -166,6 +166,11 @@ vi.mock('../../src/services/context-assembly.service.js', () => ({
     summarized: false,
     originalMessageCount: 0,
   }),
+  buildKnowledgeSection: vi.fn().mockReturnValue(''),
+}));
+
+vi.mock('../../src/services/knowledge.service.js', () => ({
+  search: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../../src/services/routing-engine.service.js', () => ({

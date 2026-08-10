@@ -136,6 +136,8 @@ export const config = {
     chunkSizeTokens: parseInt(process.env.KNOWLEDGE_CHUNK_SIZE || '1000', 10),
     /** Chunk overlap in tokens. */
     chunkOverlapTokens: parseInt(process.env.KNOWLEDGE_CHUNK_OVERLAP || '100', 10),
+    /** Max chunks injected into the system prompt during inference. */
+    topK: parseInt(process.env.KNOWLEDGE_TOP_K || '5', 10),
     /** Below this cosine score, semantic results are considered noise → keyword fallback. */
     hybridThreshold: parseFloat(process.env.KNOWLEDGE_HYBRID_THRESHOLD || '0.4'),
     /** Below this score, results are not injected into the prompt. */

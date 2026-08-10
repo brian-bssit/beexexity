@@ -84,4 +84,7 @@ export interface AuditEntry {
 
   // Passthrough mode flag
   passthrough?: boolean;
+
+  // Knowledge Layer traceability — chunk ids used to answer the request
+  knowledgeSourceIds?: string[];
 }
