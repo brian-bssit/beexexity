@@ -1,7 +1,3 @@
-Here is the detailed, production-ready `requirements.md` file specifically tailored for the Google Account integration, incorporating all the architectural decisions and constraints we discussed (reusing `username`, WAF security, JIT provisioning).
-
-***
-
 # Feature: Google Account Authentication (OAuth 2.0) 
 **Epic:** Enterprise Access & User Experience  
 

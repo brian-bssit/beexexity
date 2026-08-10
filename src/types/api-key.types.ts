@@ -1,6 +1,6 @@
 /**
  * Multi-tenant API key management types.
- * @see docs/feature-multi-tenant-api-key/
+ * @see docs/features/multi-tenant-api-key/
  */
 
 /** Registered consuming application. */

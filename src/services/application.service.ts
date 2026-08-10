@@ -1,7 +1,7 @@
 /**
  * Application Service — CRUD operations for registered consuming applications.
  * Admin-only access enforced by route-level middleware (authMiddleware → adminMiddleware).
- * @see docs/feature-multi-tenant-api-key/
+ * @see docs/features/multi-tenant-api-key/
  */
 
 import { query } from '../config/database.js';

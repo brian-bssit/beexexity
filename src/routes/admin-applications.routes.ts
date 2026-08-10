@@ -1,7 +1,7 @@
 /**
  * Admin routes — Application & API Key management.
  * All endpoints restricted to admin role via authMiddleware → adminMiddleware.
- * @see docs/feature-multi-tenant-api-key/
+ * @see docs/features/multi-tenant-api-key/
  */
 
 import { Router, Request, Response } from 'express';

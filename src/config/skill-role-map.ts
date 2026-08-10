@@ -3,7 +3,7 @@
  * Replaces LLM-generated role selection with deterministic, domain-appropriate roles.
  * Role is injected into the inference system prompt, not the refinement output.
  *
- * @see docs/routing-enhance.md — FR-3
+ * @see docs/design-notes/routing-enhance.md — FR-3
  */
 
 import { SkillType } from '../types/routing.types.js';

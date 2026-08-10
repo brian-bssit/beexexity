@@ -76,7 +76,7 @@ Before styling a UI, infer the required "dials" from the prompt (default to 5/10
 If the task is a "Large" new feature, DO NOT write code yet. Follow this documentation-first process:
 
 ### 1. Create a Feature Folder
-Create a folder named `docs/feature-[name]/` and produce three files: `requirements.md`, `design.md`, `tasks.md`.
+Create a folder named `docs/features/[name]/` and produce three files: `requirements.md`, `design.md`, `tasks.md`.
 
 ### 2. Content of Each File (Keep it Lean)
 #### `requirements.md`

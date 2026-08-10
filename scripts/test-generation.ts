@@ -1,6 +1,6 @@
 /**
  * Live test: generate HTML slides via Bedrock → validate → wrap.
- * Saves output to docs/test-generation.html for visual inspection.
+ * Saves output to docs/assets/test-generation.html for visual inspection.
  *
  * Usage: PROMPT="Laporan keuangan Q3" npx tsx scripts/test-generation.ts
  *        npx tsx scripts/test-generation.ts "Startup pitch deck for AI SaaS"
@@ -36,7 +36,7 @@ try {
     for (const err of validation.errors) console.log(`   - ${err}`);
   }
 
-  const outPath = 'docs/test-generation.html';
+  const outPath = 'docs/assets/test-generation.html';
   writeFileSync(outPath, html);
   console.log(`📄 ${outPath} — open in browser to inspect`);
 

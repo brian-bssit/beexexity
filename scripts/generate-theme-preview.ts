@@ -1,7 +1,7 @@
 /**
  * Generate static HTML preview of all 10 PPTX themes.
  * Usage: npx tsx scripts/generate-theme-preview.ts
- * Output: docs/theme-preview.html (open in browser)
+ * Output: docs/assets/theme-preview.html (open in browser)
  */
 import { PPTX_THEMES_CSS } from '../src/services/pptx-themes.js';
 import { writeFileSync } from 'fs';
@@ -123,7 +123,7 @@ ${allSlides
 </body>
 </html>`;
 
-const outPath = 'docs/theme-preview.html';
+const outPath = 'docs/assets/theme-preview.html';
 writeFileSync(outPath, html);
 console.log(`✅ ${outPath} — ${(Buffer.byteLength(html) / 1024).toFixed(0)} KB`);
 console.log('   → Open in browser to inspect all 10 themes (30 slides)');

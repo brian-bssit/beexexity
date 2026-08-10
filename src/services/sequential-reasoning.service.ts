@@ -5,7 +5,7 @@
  * plan, executes steps sequentially with accumulated context, performs
  * progressive synthesis, and always runs a final synthesizer layer.
  *
- * @see docs/feature-sequential-reasoning/
+ * @see docs/features/sequential-reasoning/
  */
 
 import { ConverseCommand } from '@aws-sdk/client-bedrock-runtime';

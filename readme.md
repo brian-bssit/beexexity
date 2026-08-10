@@ -149,26 +149,31 @@ tests/
 
 docs/
 ├── readme.md                    # This file
-├── prompt-reference.md          # System prompt catalog
-├── admin-dashboard.md           # Admin UI docs
-├── beautify-render.md           # SSE progressive rendering proposal
-├── ppt-doc-generation.md        # Original TRD for PPTX/PDF generation
-├── features/
-│   ├── multi-tenant-api-key/    # Multi-tenant API key feature (req + design + tasks)
-│   ├── google-auth/             # Google OAuth feature (design + tasks)
+├── reference/                   # Current system reference docs
+│   ├── prompt-reference.md      # System prompt catalog
+│   └── admin-dashboard.md       # Admin UI PRD
+├── analysis/                    # Gap analysis & feature evaluation
+│   ├── gap-analysis-blueprint-vs-implementation.md
+│   └── evaluation-mcp-knowledge-layer.md
+├── features/                    # Feature docs — requirements/design/tasks per feature
+│   ├── google-auth/             # Google OAuth feature
+│   ├── mcp-knowledge-layer/     # MCP knowledge layer (Tier 2) — next major feature
 │   ├── model-access/            # Model access control design
-│   ├── passthrough-mode/        # Passthrough mode feature (req + design + tasks)
-│   ├── pptx-generation/         # PPTX/PDF generation feature (req + design + tasks)
-│   ├── sequential-reasoning/    # Sequential reasoning feature (req + design + tasks + notes)
-│   ├── thinking-mode/           # Thinking mode requirements
-│   └── sub-agent/               # Sub-agent orchestration design
-├── design-notes/                # Historical design explorations
-│   ├── improvement.md, llm2-enhance.md
-│   ├── new-agents.md, new-agents-v4.md
-│   ├── routing-enhance.md
-│   └── user-feeback.md
-└── archive/
-    └── kiro/                    # Kiro tool spec docs (archived)
+│   ├── multi-tenant-api-key/    # Multi-tenant API key feature
+│   ├── passthrough-mode/        # Passthrough mode feature
+│   ├── pptx-generation/         # PPTX/PDF generation feature
+│   ├── sequential-reasoning/    # Sequential reasoning feature
+│   ├── sub-agent/               # Sub-agent orchestration design
+│   └── thinking-mode/           # Thinking mode requirements
+├── design-notes/                # Historical design explorations & proposals
+│   ├── improvement.md, improvement-CoT.md, llm2-enhance.md
+│   ├── model-private-public.md, new-agents.md, new-agents-v4.md
+│   ├── routing-enhance.md, user-feeback.md
+│   └── beautify-render.md, ppt-doc-generation.md, ppt-pdf-beautify.md
+│       prompt-improve.md, req-model-route.md, session-mem.md
+└── assets/                      # Dev preview / test HTML
+    ├── test-generation.html
+    └── theme-preview.html
 
 public/
 ├── admin.html                      # Admin dashboard — 7 tabs: Applications & Keys, Bulk Upload, Usage & Cost, Config, Model Access, Feedback, Discovered Roles

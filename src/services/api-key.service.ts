@@ -2,7 +2,7 @@
  * API Key Service — generation, hashing, validation, and lifecycle management.
  * Uses SHA-256 hashing and timing-safe comparison to prevent timing attacks.
  * Full keys are returned exactly once (at creation time) and never stored in plaintext.
- * @see docs/feature-multi-tenant-api-key/
+ * @see docs/features/multi-tenant-api-key/
  */
 
 import { randomBytes, createHash } from 'node:crypto';

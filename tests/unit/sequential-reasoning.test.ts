@@ -1,6 +1,6 @@
 /**
  * Tests for Sequential Reasoning Engine.
- * @see docs/feature-sequential-reasoning/
+ * @see docs/features/sequential-reasoning/
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
