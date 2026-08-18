@@ -749,11 +749,6 @@
       min-width: 1.25rem;
     }
 
-    /* Bold text for top-level numbered li items only (not nested sub-items) */
-    .assistant-text-content ol > li {
-      font-weight: 600;
-    }
-
     .assistant-text-content pre {
       background: var(--bg-primary);
       border: 1px solid var(--border);
@@ -803,6 +798,36 @@
     .assistant-text-content p {
       margin: 0.35rem 0;
     }
+
+    /* ── Table of contents (jump navigation) ── */
+    .toc {
+      margin: 0.5rem 0 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-primary);
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+    }
+    .toc summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--text-secondary);
+      user-select: none;
+    }
+    .toc ul { list-style: none; margin: 0.4rem 0 0; padding: 0; }
+    .toc ul li {
+      margin: 0.2rem 0;
+      padding: 0;
+      position: static;
+      font-weight: 400;
+      line-height: 1.4;
+    }
+    .toc ul li::before { content: none; }
+    .toc li.toc-h1 { padding-left: 0; }
+    .toc li.toc-h2 { padding-left: 0.75rem; }
+    .toc li.toc-h3 { padding-left: 1.5rem; }
+    .toc a { color: var(--text-secondary); text-decoration: none; }
+    .toc a:hover { color: var(--accent); text-decoration: underline; }
 
     .assistant-content h1, .assistant-content h2, .assistant-content h3,
     .assistant-content h4, .assistant-content h5, .assistant-content h6 {
@@ -2310,7 +2335,7 @@ async function handleSend() {
     `<div id="step-status" style="font-size:0.85em;line-height:1.6;margin-bottom:4px;display:flex;align-items:center;gap:6px"><span style="color:var(--accent)">⏳ Initializing...</span></div>
      <div id="seq-steps" style="margin-bottom:6px;display:none"></div>
      <details id="status-panel" style="font-size:0.85em;color:var(--text-tertiary)">
-       <summary style="cursor:pointer;user-select:none;font-weight:500">🧠 Detail Proses</summary>
+       <summary style="cursor:pointer;user-select:none;font-weight:500">Detail Proses</summary>
        <div id="tech-details" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);display:none"></div>
      </details>
      <div class="assistant-text-content"></div>`;
@@ -2480,7 +2505,7 @@ async function handleSend() {
             scopedTechDetails.style.display = 'block';
             // Panel stays collapsed by default — user expands on demand
             const d = [];
-            d.push(`<b>🧠 Thought Process:</b> ${data.reasoningSummary || 'auto-routed'}`);
+            d.push(`<b>Thought Process:</b> ${data.reasoningSummary || 'auto-routed'}`);
             d.push(`<hr style="border:0;border-top:1px solid var(--border);margin:4px 0">`);
             if (data.skill) d.push(`<b>Skill:</b> ${data.skill}`);
             d.push(`<b>Model:</b> ${data.executedModelId || 'unknown'}`);
@@ -2730,7 +2755,7 @@ async function handleSend() {
             // Inference complete — final full render with proper markdown
             if (_progressiveRaf) { cancelAnimationFrame(_progressiveRaf); _progressiveRaf = 0; }
             _progressivePrev = '';
-            try { const contentEl = assistantEl.querySelector('.assistant-text-content'); if (contentEl) { contentEl.innerHTML = formatMessage(fullText); } } catch (e) { console.error('[ui] Render error:', e); }
+            try { const contentEl = assistantEl.querySelector('.assistant-text-content'); if (contentEl) { contentEl.innerHTML = formatMessage(fullText); buildToc(contentEl); } } catch (e) { console.error('[ui] Render error:', e); }
             if (scopedStepStatus) {
               const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
               scopedStepStatus.innerHTML = '<span style=\'color:var(--text-tertiary)\'>✅ Done (' + elapsed + 's)</span>';
@@ -3217,7 +3242,7 @@ function formatMarkdown(text) {
 
     // Horizontal rule
     if (/^(---|\*\*\*|___)\s*$/.test(line.trim())) {
-      html += '<div style="height:0.5rem"></div>';
+      html += '<hr style="border:0;border-top:2px solid var(--border);margin:0.9rem 0;opacity:0.6">';
       continue;
     }
     
@@ -3722,6 +3747,28 @@ function updateSessionIdDisplay() {
   }
 }
 
+function buildToc(containerEl) {
+  if (!containerEl) return;
+  const headings = containerEl.querySelectorAll('h1, h2, h3');
+  if (headings.length < 2) return;
+
+  const items = [];
+  headings.forEach((h, i) => {
+    const text = h.textContent.trim();
+    if (!text) return;
+    let id = h.id;
+    if (!id) {
+      id = 'sec-' + i + '-' + text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 40);
+      h.id = id;
+    }
+    items.push({ id, text, tag: h.tagName.toLowerCase() });
+  });
+  if (items.length < 2) return;
+
+  const list = items.map(it => `<li class="toc-${it.tag}"><a href="#${it.id}">${escapeHtml(it.text)}</a></li>`).join('');
+  containerEl.insertAdjacentHTML('afterbegin', `<details class="toc"><summary>📋 Daftar Isi</summary><ul>${list}</ul></details>`);
+}
+
 function addMessage(type, text) {
   const messagesContainer = document.getElementById('messages');
   const el = document.createElement('div');
@@ -3731,6 +3778,7 @@ function addMessage(type, text) {
     el.innerHTML = `<div class="user-content">${escapeHtml(text)}</div>`;
   } else if (type === 'assistant') {
     el.innerHTML = `<div class="assistant-content">${formatMessage(text)}</div>`;
+    buildToc(el.querySelector('.assistant-content'));
     // Add top-right copy button
     const copyBtnTop = createCopyButton(el);
     copyBtnTop.classList.add('copy-btn-top');
