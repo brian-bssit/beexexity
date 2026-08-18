@@ -64,7 +64,7 @@ describe('AuditService', () => {
           false, // contextSummarized is undefined → false
           null, // sessionState is undefined → null
           null, // turnCount is undefined → null
-          JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62 }), // modelPricingSnapshot for qwen3-32b
+          JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }), // modelPricingSnapshot for qwen3-32b
           null, // orchestrationMeta is undefined → null
           null, // orchestrationGroupId is undefined → null
           null, // orchestrationStepOrder is undefined → null
@@ -78,6 +78,7 @@ describe('AuditService', () => {
           null, // applicationId
           false, // passthrough
           null, // knowledgeSourceIds (not provided → null)
+          null, // embeddingInputTokens (not provided → null)
         ],
       );
     });
@@ -167,7 +168,7 @@ describe('AuditService', () => {
 
       // Verify the params array only contains the expected metadata fields
       const params = mockedQuery.mock.calls[0][1] as unknown[];
-      expect(params).toHaveLength(41);
+      expect(params).toHaveLength(42);
       expect(params).toEqual([
         validEntry.timestamp,
         validEntry.userId,
@@ -196,7 +197,7 @@ describe('AuditService', () => {
         false, // contextSummarized
         null, // sessionState
         null, // turnCount
-        JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62 }), // modelPricingSnapshot
+        JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }), // modelPricingSnapshot
           null, // orchestrationMeta is undefined → null
         null, // orchestrationGroupId
         null, // orchestrationStepOrder
@@ -210,6 +211,7 @@ describe('AuditService', () => {
         null, // applicationId
         false, // passthrough
         null, // knowledgeSourceIds (not provided → null)
+        null, // embeddingInputTokens (not provided → null)
       ]);
     });
 
@@ -248,7 +250,7 @@ describe('AuditService', () => {
       expect(params[25]).toBe('active'); // sessionState
       expect(params[26]).toBe(3); // turnCount
       // Pricing snapshot at index 19 (from actual pricing-config.json)
-      expect(params[27]).toBe(JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62 }));
+      expect(params[27]).toBe(JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }));
     });
 
     it('should not include any raw message content in audit fields', async () => {
@@ -289,7 +291,7 @@ describe('AuditService', () => {
       expect(params[25]).toBeNull();
       expect(params[26]).toBeNull();
       // modelPricingSnapshot (from actual pricing-config.json for qwen3-32b)
-      expect(params[27]).toBe(JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62 }));
+      expect(params[27]).toBe(JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }));
     });
   });
 });

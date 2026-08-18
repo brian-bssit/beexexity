@@ -55,6 +55,7 @@ export interface CostReportAuditRow {
   model_id: string;
   input_tokens: string;
   output_tokens: string;
+  embedding_input_tokens?: string | null;
   request_count: string;
   model_pricing_snapshot: Record<string, number> | null;
   // Multi-tenant API key fields

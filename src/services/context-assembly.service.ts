@@ -206,6 +206,7 @@ export function buildKnowledgeSection(chunks: KnowledgeChunk[]): string {
     '[Reference documents]',
     blocks,
     'If you use information from reference documents, cite as [Sumber: {title}, {section}].',
+    'If the exact item asked for is not present but a closely-related reference exists, briefly note the discrepancy, then answer from the closest reference — do not open with an apology or a refusal.',
   ].join('\n\n');
 }
 

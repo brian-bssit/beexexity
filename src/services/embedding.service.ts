@@ -1,5 +1,5 @@
 /**
- * Embedding Service — generates vector embeddings via Bedrock Titan Embeddings v2.
+ * Embedding Service — generates vector embeddings via Bedrock Cohere Embed v4.
  * Reusable for any use case beyond the knowledge layer.
  * @see docs/features/mcp-knowledge-layer/
  */
@@ -14,18 +14,26 @@ const bedrockClient = new BedrockRuntimeClient({
 });
 
 /**
- * Generate a normalized 1024-dim embedding for a text.
+ * Generate a 1536-dim embedding via Cohere Embed v4 (only embed model in
+ * ap-southeast-3; Titan Embed v2 is unavailable in this region).
  * Throws on dimension mismatch, empty response, or timeout.
+ *
+ * @param text - Text to embed
+ * @param inputType - Cohere embedding type — 'search_document' for indexing,
+ *                    'search_query' for retrieval queries
  */
-export async function generateEmbedding(text: string): Promise<Float32Array> {
+export async function generateEmbedding(
+  text: string,
+  inputType: 'search_document' | 'search_query' = 'search_document',
+): Promise<Float32Array> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.knowledge.embeddingTimeoutMs);
 
   try {
     const body = JSON.stringify({
-      inputText: text,
-      dimensions: config.knowledge.embeddingDimensions,
-      normalize: true,
+      texts: [text],
+      input_type: inputType,
+      embedding_types: ['float'],
     });
 
     const command = new InvokeModelCommand({
@@ -36,8 +44,10 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
     });
 
     const response = await bedrockClient.send(command, { abortSignal: controller.signal });
-    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as { embedding?: unknown };
-    const embedding = parsed.embedding;
+    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as {
+      embeddings?: { float?: number[][] };
+    };
+    const embedding = parsed.embeddings?.float?.[0];
 
     if (!Array.isArray(embedding) || embedding.length !== config.knowledge.embeddingDimensions) {
       throw new Error(

@@ -160,6 +160,7 @@
     <button class="tab-btn" data-tab="models">Model Access</button>
     <button class="tab-btn" data-tab="feedback">Feedback Reports</button>
     <button class="tab-btn" data-tab="discovered">Discovered Roles</button>
+    <button class="tab-btn" data-tab="knowledge">Knowledge</button>
   </div>
 
   <!-- Tab: Applications & API Keys -->
@@ -302,6 +303,55 @@
         <tbody id="discovered-table-body"><tr><td colspan="5" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr></tbody>
       </table>
     </div>
+  </div>
+
+  <!-- Tab: Knowledge Upload -->
+  <div class="tab-content" id="tab-knowledge">
+    <h3>Knowledge Documents</h3>
+    <p style="color:var(--text-tertiary);margin-bottom:1rem">Upload dokumen internal (SOP, memo, regulasi, FAQ) untuk di-index ke knowledge base dan disitasi saat inference.</p>
+
+    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;padding:1.25rem;margin-bottom:1.5rem;max-width:620px">
+      <div style="font-weight:600;margin-bottom:1rem">Upload Dokumen</div>
+      <div><label>File <span style="color:var(--text-tertiary)">(PDF, DOCX, XLSX, PPTX, MD, TXT, HTML, JSON, CSV, XML)</span></label><input type="file" id="kb-file" accept=".pdf,.docx,.xlsx,.xls,.pptx,.md,.txt,.html,.htm,.json,.csv,.xml" onchange="onKnowledgeFileSelected(this)"></div>
+      <div id="kb-meta-form" style="display:none">
+        <div style="font-size:0.78rem;color:var(--text-tertiary);margin:0.5rem 0 0.75rem">Metadata di-prefill dari nama file / front-matter — edit bila perlu.</div>
+        <div><label>Title *</label><input type="text" id="kb-title" placeholder="e.g. SOP Pengajuan Kredit"></div>
+        <div class="form-row">
+          <div><label>Doc Type *</label><select id="kb-doctype">
+            <option value="SOP">SOP</option><option value="MEMO">MEMO</option><option value="REGULATION">REGULATION</option>
+            <option value="PRODUCT_FAQ">PRODUCT_FAQ</option><option value="HKR">HKR</option><option value="HUK">HUK</option>
+            <option value="AUDIT">AUDIT</option><option value="JUKNIS">JUKNIS</option><option value="BRD">BRD</option><option value="FSD">FSD</option>
+            <option value="PKS">PKS</option><option value="UAT">UAT</option><option value="SIT">SIT</option>
+            <option value="OTHER">OTHER</option>
+          </select></div>
+          <div><label>Binding Level</label><select id="kb-binding">
+            <option value="regulatory">regulatory</option><option value="advisory">advisory</option><option value="commentary">commentary</option>
+          </select></div>
+        </div>
+        <div class="form-row">
+          <div><label>Source Type</label><select id="kb-source">
+            <option value="internal">internal</option><option value="official">official</option><option value="hukumonline">hukumonline</option>
+          </select></div>
+          <div><label>Sensitivity</label><select id="kb-sensitivity">
+            <option value="internal">internal</option><option value="restricted">restricted</option><option value="public">public</option>
+          </select></div>
+        </div>
+        <div style="display:flex;gap:0.75rem;margin-top:0.75rem">
+          <button class="btn btn-primary" onclick="uploadKnowledgeDocument()" id="kb-upload-btn">Submit</button>
+          <button class="btn btn-secondary" onclick="cancelKnowledgeUpload()" id="kb-cancel-btn">Cancel</button>
+        </div>
+      </div>
+      <div id="kb-upload-status" style="margin-top:0.75rem;font-size:0.85rem;color:var(--text-secondary)"></div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+      <h4 style="margin:0">Recent Ingestions</h4>
+      <button class="btn btn-sm btn-secondary" onclick="loadKnowledgeJobs()">↻ Refresh</button>
+    </div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>File</th><th>Type</th><th>Binding</th><th>Source</th><th>Sensitivity</th><th>Status</th><th>Chunks</th><th>By</th><th>Created</th><th></th></tr></thead>
+      <tbody id="kb-jobs-body"><tr><td colspan="10" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr></tbody>
+    </table></div>
   </div>
 
   <!-- Discovered Roles Context Modal -->
@@ -568,6 +618,7 @@
         if (btn.dataset.tab === 'models') loadModelAccess();
         if (btn.dataset.tab === 'feedback') { fbPage = 1; loadFeedbackReports(); }
         if (btn.dataset.tab === 'discovered') loadDiscoveredRoles();
+        if (btn.dataset.tab === 'knowledge') loadKnowledgeJobs();
       });
     });
 
@@ -910,6 +961,205 @@
       if (!confirm('Permanently delete this key?')) return;
       try { await api(API_BASE + '/admin/keys/' + id, { method: 'DELETE' }); showToast('Key deleted'); viewKeys(appsViewingAppId, ''); }
       catch (e) { showToast(e.message, 'error'); }
+    }
+
+    // ─── Tab: Knowledge Upload ──────────────────────────────────────────────
+    function parseKnowledgeFilename(name) {
+      const base = name.replace(/\.[^.]+$/, '');
+      const sep = base.indexOf('_');
+      if (sep <= 0) return { docType: '', title: base.replace(/_/g, ' ') };
+      return { docType: base.slice(0, sep).toUpperCase(), title: base.slice(sep + 1).replace(/_/g, ' ') };
+    }
+
+    function parseKnowledgeFrontMatter(raw) {
+      const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+      if (!m) return {};
+      const out = {};
+      for (const line of m[1].split(/\r?\n/)) {
+        const idx = line.indexOf(':');
+        if (idx <= 0) continue;
+        const k = line.slice(0, idx).trim();
+        const v = line.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+        if (k) out[k] = v;
+      }
+      return out;
+    }
+
+    function onKnowledgeFileSelected(input) {
+      const file = input.files && input.files[0];
+      const form = document.getElementById('kb-meta-form');
+      if (!file) { form.style.display = 'none'; return; }
+
+      const { docType, title } = parseKnowledgeFilename(file.name);
+      if (title) document.getElementById('kb-title').value = title;
+      if (docType) document.getElementById('kb-doctype').value = docType;
+
+      if (/\.md$/i.test(file.name)) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const fm = parseKnowledgeFrontMatter(String(e.target.result));
+          if (fm.doc_type) document.getElementById('kb-doctype').value = String(fm.doc_type).toUpperCase();
+          if (fm.title) document.getElementById('kb-title').value = String(fm.title);
+          if (fm.binding_level) document.getElementById('kb-binding').value = String(fm.binding_level);
+          if (fm.source_type) document.getElementById('kb-source').value = String(fm.source_type);
+          if (fm.sensitivity) document.getElementById('kb-sensitivity').value = String(fm.sensitivity);
+        };
+        reader.readAsText(file);
+      }
+
+      document.getElementById('kb-upload-status').textContent = '';
+      form.style.display = 'block';
+      aiPrefillMetadata(file);
+    }
+
+    function setSelectValue(id, value) {
+      const sel = document.getElementById(id);
+      if (!sel || value === undefined || value === null) return;
+      const v = String(value).trim();
+      if ([...sel.options].some(o => o.value === v)) sel.value = v;
+    }
+
+    async function aiPrefillMetadata(file) {
+      const status = document.getElementById('kb-upload-status');
+      status.textContent = '🤖 AI: extracting metadata...';
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(API_BASE + '/knowledge/metadata/extract', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: fd,
+        });
+        const data = await res.json();
+        const meta = data && data.metadata;
+        if (!meta) { status.textContent = ''; return; }
+        if (meta.title) document.getElementById('kb-title').value = meta.title;
+        setSelectValue('kb-doctype', String(meta.doc_type || '').toUpperCase());
+        setSelectValue('kb-binding', meta.binding_level);
+        setSelectValue('kb-source', meta.source_type);
+        setSelectValue('kb-sensitivity', meta.sensitivity);
+        status.textContent = '✅ Metadata di-prefill oleh AI (edit bila perlu)';
+      } catch (e) {
+        status.textContent = '';
+      }
+    }
+
+    function cancelKnowledgeUpload() {
+      document.getElementById('kb-file').value = '';
+      document.getElementById('kb-title').value = '';
+      document.getElementById('kb-doctype').value = 'SOP';
+      document.getElementById('kb-binding').value = 'regulatory';
+      document.getElementById('kb-source').value = 'internal';
+      document.getElementById('kb-sensitivity').value = 'internal';
+      document.getElementById('kb-upload-status').textContent = '';
+      document.getElementById('kb-meta-form').style.display = 'none';
+      document.getElementById('kb-upload-btn').disabled = false;
+    }
+
+    async function uploadKnowledgeDocument() {
+      const fileInput = document.getElementById('kb-file');
+      const file = fileInput.files && fileInput.files[0];
+      const title = document.getElementById('kb-title').value.trim();
+      const docType = document.getElementById('kb-doctype').value;
+      if (!file) return showToast('Pilih file dulu', 'warning');
+      if (!title) return showToast('Title wajib diisi', 'warning');
+
+      const metadata = {
+        title,
+        doc_type: docType,
+        binding_level: document.getElementById('kb-binding').value,
+        source_type: document.getElementById('kb-source').value,
+        sensitivity: document.getElementById('kb-sensitivity').value,
+      };
+
+      const btn = document.getElementById('kb-upload-btn');
+      const status = document.getElementById('kb-upload-status');
+      btn.disabled = true;
+      status.textContent = 'Uploading...';
+
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('metadata', JSON.stringify(metadata));
+
+      try {
+        const res = await fetch(API_BASE + '/knowledge/documents', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: fd,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Upload failed');
+        status.textContent = `Diproses (job ${data.id})...`;
+        pollKnowledgeJob(data.id);
+      } catch (e) {
+        status.textContent = '';
+        showToast('Error: ' + e.message, 'error');
+        btn.disabled = false;
+      }
+    }
+
+    async function pollKnowledgeJob(id) {
+      const status = document.getElementById('kb-upload-status');
+      const btn = document.getElementById('kb-upload-btn');
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const res = await fetch(API_BASE + '/knowledge/documents/' + id + '/status', { headers: { 'Authorization': `Bearer ${token}` } });
+          const j = await res.json();
+          if (!res.ok) throw new Error(j.message || 'Status check failed');
+          if (j.status === 'completed') {
+            showToast('Dokumen ter-index (' + j.chunks_indexed + ' chunk)');
+            loadKnowledgeJobs();
+            cancelKnowledgeUpload(); // reset ke state awal (re-enable btn + clear form)
+            return;
+          }
+          if (j.status === 'failed') {
+            status.innerHTML = '❌ <span class="text-error">Failed: ' + (j.error || 'unknown') + '</span>';
+            loadKnowledgeJobs();
+            btn.disabled = false; // re-enable — user bisa retry
+            return;
+          }
+          status.textContent = 'Processing... (' + (i + 1) + 's)';
+        } catch (e) {
+          status.textContent = '';
+          showToast('Error: ' + e.message, 'error');
+          btn.disabled = false;
+          return;
+        }
+      }
+      status.textContent = 'Timeout — cek tabel Recent Ingestions';
+      loadKnowledgeJobs();
+      btn.disabled = false;
+    }
+
+    async function loadKnowledgeJobs() {
+      const tbody = document.getElementById('kb-jobs-body');
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr>';
+      try {
+        const data = await api(API_BASE + '/knowledge/documents?limit=50');
+        const jobs = data.jobs || [];
+        if (!jobs.length) { tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-tertiary)">No documents ingested yet</td></tr>'; return; }
+        tbody.innerHTML = jobs.map(j => `<tr>
+          <td>${esc(j.source_file)}</td>
+          <td>${esc(j.doc_type || '—')}</td>
+          <td>${esc(j.binding_level || '—')}</td>
+          <td>${esc(j.source_type || '—')}</td>
+          <td>${esc(j.sensitivity || '—')}</td>
+          <td>${kbStatusBadge(j.status)}</td>
+          <td>${j.chunks_indexed}</td>
+          <td>${esc(j.uploaded_by || '—')}</td>
+          <td>${j.created_at ? new Date(j.created_at).toLocaleString() : '—'}</td>
+          <td>${j.error ? '<span style="color:var(--text-tertiary);font-size:0.8rem" title="' + esc(j.error) + '">⚠</span>' : ''}</td>
+        </tr>`).join('');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--accent)">Error loading</td></tr>';
+      }
+    }
+
+    function kbStatusBadge(status) {
+      if (status === 'completed') return '<span style="color:#2ecc71;font-size:0.8rem">✅ Completed</span>';
+      if (status === 'failed') return '<span style="color:#e74c3c;font-size:0.8rem">❌ Failed</span>';
+      return '<span style="color:#f39c12;font-size:0.8rem">⏳ Processing</span>';
     }
 
     // Load cost report + config on first render

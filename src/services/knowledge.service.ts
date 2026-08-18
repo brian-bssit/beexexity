@@ -68,8 +68,28 @@ function mapChunk(row: KnowledgeRow): KnowledgeChunk {
 const BINDING_LEVEL_ORDER = `CASE COALESCE(metadata->>'binding_level', 'commentary')
   WHEN 'regulatory' THEN 0 WHEN 'advisory' THEN 1 ELSE 2 END`;
 
+/** Common stopwords + question words — dropped from keyword queries. */
+const STOPWORDS = new Set([
+  'apa', 'apakah', 'bagaimana', 'berapa', 'mengapa', 'mana', 'kapan',
+  'yang', 'dan', 'atau', 'untuk', 'dari', 'dengan', 'pada', 'ini', 'itu',
+  'adalah', 'saya', 'anda', 'kita', 'kami', 'kamu', 'mereka',
+  'di', 'ke', 'se', 'tentang', 'mengenai', 'harus', 'boleh', 'bisa',
+  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'how',
+  'of', 'to', 'in', 'on', 'and', 'for',
+]);
+
+/** Tokenize a query into significant keywords for keyword-based retrieval. */
+function tokenizeKeywords(text: string): string[] {
+  const words = text.toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+  return [...new Set(words)];
+}
+
 async function searchInternal(queryText: string, topK: number): Promise<KnowledgeChunk[]> {
-  const embedding = await generateEmbedding(queryText);
+  const embedding = await generateEmbedding(queryText, 'search_query');
   const vec = embeddingToSql(embedding);
 
   const { rows } = await query<KnowledgeRow>(
@@ -85,15 +105,20 @@ async function searchInternal(queryText: string, topK: number): Promise<Knowledg
   const semantic = rows.map(mapChunk);
   const maxScore = semantic[0]?.score ?? 0;
 
-  // Hybrid fallback: semantic below threshold → keyword (exact matches, high precision).
+  // Hybrid fallback: semantic below threshold → tokenized keyword OR-match.
   if (semantic.length === 0 || maxScore < config.knowledge.hybridThreshold) {
+    const keywords = tokenizeKeywords(queryText);
+    if (keywords.length === 0) return [];
+
+    const orClauses = keywords.map((_, i) => `content ILIKE $${i + 1}`).join(' OR ');
+    const matchScore = keywords.map((_, i) => `(content ILIKE $${i + 1})::int`).join(' + ');
     const { rows: kwRows } = await query<KnowledgeRow>(
       `SELECT id, content, title, doc_type, metadata
        FROM knowledge_documents
-       WHERE content ILIKE $1
-       ORDER BY ${BINDING_LEVEL_ORDER}, created_at DESC
-       LIMIT $2`,
-      [`%${queryText}%`, topK],
+       WHERE ${orClauses}
+       ORDER BY (${matchScore}) DESC, ${BINDING_LEVEL_ORDER}, created_at DESC
+       LIMIT $${keywords.length + 1}`,
+      [...keywords.map((k) => `%${k}%`), topK],
     );
     return kwRows.map((r) => mapChunk(r));
   }

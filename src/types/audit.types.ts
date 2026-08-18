@@ -87,4 +87,7 @@ export interface AuditEntry {
 
   // Knowledge Layer traceability — chunk ids used to answer the request
   knowledgeSourceIds?: string[];
+
+  // Cohere Embed v4 usage — input tokens consumed by knowledge retrieval
+  embeddingInputTokens?: number;
 }

@@ -42,9 +42,12 @@ class AuditService {
     const modelPricing = this.pricingCache?.models[modelId];
     if (!modelPricing) return null;
 
+    const embeddingPricing = this.pricingCache?.models['cohere.embed-v4:0'];
+
     return {
       inputPricePer1MTokens: modelPricing.inputPricePer1MTokens,
       outputPricePer1MTokens: modelPricing.outputPricePer1MTokens,
+      embeddingPricePer1MTokens: embeddingPricing?.inputPricePer1MTokens ?? 0,
     };
   }
   /**
@@ -104,8 +107,9 @@ class AuditService {
           api_key_id,
           application_id,
           passthrough,
-          knowledge_sources
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41)`,
+          knowledge_sources,
+          embedding_input_tokens
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42)`,
         [
           entry.timestamp,
           entry.userId,
@@ -148,6 +152,7 @@ class AuditService {
           entry.applicationId ?? null,
           entry.passthrough ?? false,
           entry.knowledgeSourceIds ? JSON.stringify(entry.knowledgeSourceIds) : null,
+          entry.embeddingInputTokens ?? null,
         ],
       );
     } catch (error) {

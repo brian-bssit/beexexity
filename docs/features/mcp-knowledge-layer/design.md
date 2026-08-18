@@ -41,7 +41,7 @@ Metadata Extraction
 Chunking (recursive text splitter, 1000 tokens, 100 overlap)
   │
   ▼
-embedding.service.ts (Titan Embeddings v2, 1024d)
+embedding.service.ts (Cohere Embed v4, 1536d)
   │  text → Float32Array
   ▼
 knowledge.service.indexDocument()
@@ -59,9 +59,10 @@ pgvector (IVFflat index, cosine similarity)
 
 #### `src/services/embedding.service.ts`
 ```
-generateEmbedding(text: string) → Float32Array  // single text → 1024d vector
-  // InvokeModel: amazon.titan-embed-text-v2:0
-  // max input: 8000 tokens, normalized output
+generateEmbedding(text: string, inputType: 'search_document' | 'search_query') → Float32Array
+  // InvokeModel: global.cohere.embed-v4:0 (cross-region inference profile;
+  // bare cohere.embed-v4:0 ditolak — on-demand throughput tidak didukung)
+  // request: { texts, input_type, embedding_types: ['float'] } → fixed 1536-dim output
   // throws on dimension mismatch or empty response
 
 embeddingToSql(emb: Float32Array) → string       // [0.1,0.2,...] for pgvector
@@ -157,7 +158,7 @@ CREATE TABLE knowledge_documents (
     chunk_index INTEGER NOT NULL DEFAULT 0,
     content TEXT NOT NULL,
     content_hash VARCHAR(16) NOT NULL,
-    embedding VECTOR(1024),
+    embedding VECTOR(1536),
     metadata JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -206,7 +207,7 @@ RecursiveTextSplitter:
 
 2. **Hybrid search.** Cosine untuk semantic similarity, ILIKE untuk keyword eksak (penting untuk query regulasi seperti "Pasal 22 UU PDP"). Threshold 0.4 — di bawah itu hasil dianggap noise dan tidak di-inject.
 
-3. **Embedding model: Titan v2, bukan Cohere.** Sudah dalam ekosistem Bedrock ap-southeast-3. Latency di bawah target <200ms (Req 2.4). Tidak perlu API key tambahan.
+3. **Embedding model: Cohere embed-v4, bukan Titan v2.** Titan Embed v2 tidak tersedia di ap-southeast-3 (hanya us-east-1). Cohere Embed v4 adalah satu-satunya model embedding di region ini. Latency di bawah target <200ms (Req 2.4). Tidak perlu API key tambahan.
 
 4. **Citation mandatory dari prompt, bukan post-processing.** Lebih murah dan lebih akurat — model yang memutuskan kapan merujuk, bukan regex. Instruksi sitasi di system prompt, bukan di output parser.
 

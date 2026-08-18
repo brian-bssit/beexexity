@@ -4,13 +4,13 @@
 ---
 
 ## Overview
-Lapisan pengetahuan internal (Tier 2) berbasis vector search (pgvector + Bedrock Titan Embeddings) yang memungkinkan model AI mengakses dan menyitasi dokumen internal bank secara terstruktur — SOP, memo, HKR, HUK, audit, FAQ produk, teks regulasi resmi, dan konten Hukumonline. Prompt enrichment otomatis di inference time: query user → semantic search → inject top-3 dokumen relevan ke system prompt dengan instruksi sitasi.
+Lapisan pengetahuan internal (Tier 2) berbasis vector search (pgvector + Bedrock Cohere Embed v4) yang memungkinkan model AI mengakses dan menyitasi dokumen internal bank secara terstruktur — SOP, memo, HKR, HUK, audit, FAQ produk, teks regulasi resmi, dan konten Hukumonline. Prompt enrichment otomatis di inference time: query user → semantic search → inject top-3 dokumen relevan ke system prompt dengan instruksi sitasi.
 - **Arsitektur Tier 2:** MCP-based knowledge services exposing enterprise documents and law/regulatory content as structured resources/tools (FR-T2-001). Tier 1 interactions dapat memanggil MCP tools untuk document search dan section retrieval (FR-T2-002).
 - **MCP Protocol SDK:** Standarisasi interface via `@modelcontextprotocol/express` ditunda — fokus pada retrieval pipeline dulu.
 
 ## Glossary
 - **Knowledge Document:** Satu chunk Markdown dari dokumen internal yang sudah di-embed dan di-index. Disimpan dengan structured metadata/front-matter dan tagged fields (FR-MCP-002).
-- **Embedding:** Representasi vektor (1024 dimensi, Float32) dari teks yang memungkinkan pencarian semantik (cosine similarity).
+- **Embedding:** Representasi vektor (1536 dimensi, Float32) dari teks yang memungkinkan pencarian semantik (cosine similarity).
 - **Chunk:** Satu unit teks hasil splitting dokumen panjang. Overlap 10% antar chunk untuk menjaga konteks.
 - **Citation:** Format `[Sumber: {judul}, {section}]` yang harus disertakan model saat merujuk dokumen internal. Setiap knowledge item harus menyimpan cukup provenance untuk mendukung user-visible citations dan source traceability (FR-MCP-003).
 - **Metadata Schema:** Kontrak metadata kanonikal per dokumen — core fields (id, title, version, status, effective_date, expiry_date) + classification tags (domain, category, sensitivity, jurisdiction) sesuai §7 dokumen requirement.
@@ -23,7 +23,7 @@ Lapisan pengetahuan internal (Tier 2) berbasis vector search (pgvector + Bedrock
 **User Story:** Admin dapat mengindeks dokumen internal ke knowledge base untuk digunakan saat inference.
 
 **Acceptance Criteria:**
-1. Tabel `knowledge_documents` menggunakan pgvector dengan kolom `embedding VECTOR(1024)`, `content TEXT`, `doc_type VARCHAR`, `title VARCHAR`, `metadata JSONB`.
+1. Tabel `knowledge_documents` menggunakan pgvector dengan kolom `embedding VECTOR(1536)`, `content TEXT`, `doc_type VARCHAR`, `title VARCHAR`, `metadata JSONB`.
 2. Index IVFflat untuk cosine similarity search — cocok untuk <10,000 dokumen.
 3. Content hash (SHA-256, 16 char) untuk deduplikasi saat ingestion — chunk yang sama tidak di-insert ulang.
 4. **Knowledge Domains (FR-MCP-001, FR-WF-004):** Sistem mendukung minimal domain dokumen berikut:
@@ -57,7 +57,7 @@ Lapisan pengetahuan internal (Tier 2) berbasis vector search (pgvector + Bedrock
 **User Story:** Sistem dapat menghasilkan vector embedding dari teks dokumen menggunakan AWS Bedrock.
 
 **Acceptance Criteria:**
-1. Model: `amazon.titan-embed-text-v2:0`, 1024 dimensi, normalized (unit vector).
+1. Model: `global.cohere.embed-v4:0` (cross-region inference profile; bare `cohere.embed-v4:0` ditolak karena on-demand throughput tidak didukung di ap-southeast-3), 1536 dimensi, normalized (unit vector).
 2. Input maksimal 8000 token per call — teks yang lebih panjang harus di-chunk sebelum embed.
 3. Embedding service terpisah (`embedding.service.ts`) — reusable untuk use case selain knowledge layer.
 4. Latency target: <200ms per embedding call.

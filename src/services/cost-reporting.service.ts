@@ -75,6 +75,7 @@ export async function getCostReport(
        al.model_id,
        SUM(al.input_tokens)::bigint  AS input_tokens,
        SUM(al.output_tokens)::bigint AS output_tokens,
+       SUM(al.embedding_input_tokens)::bigint AS embedding_input_tokens,
        COUNT(*)::integer              AS request_count,
        al.model_pricing_snapshot,
        al.application_id,
@@ -105,6 +106,7 @@ export async function getCostReport(
   for (const row of result.rows) {
     const inputTokens = parseInt(row.input_tokens, 10);
     const outputTokens = parseInt(row.output_tokens, 10);
+    const embeddingTokens = parseInt(row.embedding_input_tokens ?? '0', 10);
     const requestCount = parseInt(row.request_count, 10);
     const snapshot = row.model_pricing_snapshot;
 
@@ -114,10 +116,16 @@ export async function getCostReport(
       typeof snapshot.inputPricePer1MTokens === 'number' &&
       typeof snapshot.outputPricePer1MTokens === 'number'
     ) {
-      modelCost =
+      const llmCost =
         (inputTokens * snapshot.inputPricePer1MTokens +
           outputTokens * snapshot.outputPricePer1MTokens) /
         1_000_000;
+      const embRate =
+        typeof snapshot.embeddingPricePer1MTokens === 'number'
+          ? snapshot.embeddingPricePer1MTokens
+          : 0;
+      const embCost = (embeddingTokens * embRate) / 1_000_000;
+      modelCost = llmCost + embCost;
     }
 
     const modelBreakdown: UserModelBreakdown = {

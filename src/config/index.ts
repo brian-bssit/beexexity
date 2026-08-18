@@ -124,10 +124,13 @@ export const config = {
     listPageSize: parseInt(process.env.SESSION_LIST_PAGE_SIZE || '50', 10),
   },
   knowledge: {
-    /** Embedding model (Bedrock Titan Embeddings v2, 1024 dims). */
-    embeddingModel: 'amazon.titan-embed-text-v2:0',
-    /** Embedding dimensions (matches migration 024 VECTOR(1024)). */
-    embeddingDimensions: 1024,
+    /** Embedding model — Cohere Embed v4 via cross-region inference profile.
+     *  Bare `cohere.embed-v4:0` is rejected ("on-demand throughput isn't supported");
+     *  the `global.` profile routes correctly from ap-southeast-3. */
+    embeddingModel: process.env.KNOWLEDGE_EMBEDDING_MODEL || 'global.cohere.embed-v4:0',
+    /** Embedding dimensions — Cohere Embed v4 emits a fixed 1536-dim vector
+     *  (the Bedrock inference profile rejects a `dimensions` param). */
+    embeddingDimensions: 1536,
     /** Timeout per embedding call. */
     embeddingTimeoutMs: parseInt(process.env.EMBEDDING_TIMEOUT_MS || '2000', 10),
     /** Timeout for knowledge retrieval during inference. */

@@ -17,11 +17,11 @@ import {
 
 const { __mockSend: mockSend } = await import('@aws-sdk/client-bedrock-runtime') as any;
 
-const DIMS = 1024;
+const DIMS = 1536;
 
 function mockEmbeddingResponse(values: number[]): void {
   mockSend.mockResolvedValueOnce({
-    body: new Uint8Array(Buffer.from(JSON.stringify({ embedding: values }))),
+    body: new Uint8Array(Buffer.from(JSON.stringify({ embeddings: { float: [values] } }))),
   });
 }
 

@@ -61,6 +61,23 @@ describe('CostReportingService', () => {
       expect(result.grandTotal.estimatedCostUsd).toBeCloseTo(0.000047, 9);
     });
 
+    it('includes Cohere embedding cost when embedding tokens and rate are present', async () => {
+      mockedQuery.mockResolvedValueOnce({ rows: [{ count: '1' }] } as any);
+      mockedQuery.mockResolvedValueOnce({
+        rows: [makeRow({
+          embedding_input_tokens: '1000',
+          model_pricing_snapshot: { inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 },
+        })],
+      } as any);
+
+      const result = await getCostReport();
+      const u = result.users[0];
+
+      // cost = (100*0.16 + 50*0.62 + 1000*0.12) / 1e6 = (16 + 31 + 120) / 1e6 = 0.000167
+      expect(u.estimatedCostUsd).toBeCloseTo(0.000167, 9);
+      expect(result.grandTotal.estimatedCostUsd).toBeCloseTo(0.000167, 9);
+    });
+
     it('aggregates multiple users with different models correctly', async () => {
       mockedQuery.mockResolvedValueOnce({ rows: [{ count: '2' }] } as any);
       mockedQuery.mockResolvedValueOnce({

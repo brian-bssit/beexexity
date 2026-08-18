@@ -18,11 +18,11 @@ import { search, indexDocument, deleteDocument } from '../../src/services/knowle
 
 const { __mockSend: mockSend } = await import('@aws-sdk/client-bedrock-runtime') as any;
 
-const DIMS = 1024;
+const DIMS = 1536;
 
 function mockEmbedding(): void {
   mockSend.mockResolvedValue({
-    body: new Uint8Array(Buffer.from(JSON.stringify({ embedding: Array.from({ length: DIMS }, () => 0.1) }))),
+    body: new Uint8Array(Buffer.from(JSON.stringify({ embeddings: { float: [Array.from({ length: DIMS }, () => 0.1)] } }))),
   });
 }
 
@@ -62,13 +62,27 @@ describe('search', () => {
     const weak = { ...CHUNK_ROW, score: 0.2 }; // < hybridThreshold 0.4
     vi.mocked(query)
       .mockResolvedValueOnce({ rows: [weak] }) // cosine query — low score
-      .mockResolvedValueOnce({ rows: [{ ...CHUNK_ROW, score: undefined }] }); // ILIKE query
+      .mockResolvedValueOnce({ rows: [{ ...CHUNK_ROW, score: undefined }] }); // keyword query
 
     const results = await search('Pasal 22 UU PDP', 3);
 
     // ILIKE rows carry no score → 0, but pass through (exact match, high precision)
     expect(results).toHaveLength(1);
     expect(results[0].title).toBe('SOP Pengajuan Kredit');
+  });
+
+  it('tokenizes the query into OR keywords instead of full-phrase match', async () => {
+    mockEmbedding();
+    vi.mocked(query)
+      .mockResolvedValueOnce({ rows: [{ ...CHUNK_ROW, score: 0.2 }] }) // cosine — low
+      .mockResolvedValueOnce({ rows: [{ ...CHUNK_ROW, score: undefined }] }); // keyword
+
+    await search('berapa hari cuti tahunan', 3);
+
+    const kwSql = vi.mocked(query).mock.calls[1][0] as string;
+    expect(kwSql).toMatch(/content ILIKE \$1/);
+    expect(kwSql).toContain(' OR ');
+    expect(kwSql).not.toContain('%berapa hari cuti tahunan%');
   });
 
   it('degrades gracefully to [] on DB error', async () => {

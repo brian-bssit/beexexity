@@ -63,6 +63,12 @@ const upload = multer({
 export const uploadMiddleware = upload.array('files', MAX_FILE_COUNT);
 
 /**
+ * Express middleware that accepts a single file under the 'file' field.
+ * Used by the knowledge upload endpoint (POST /api/v1/knowledge/documents).
+ */
+export const knowledgeUploadMiddleware = upload.single('file');
+
+/**
  * Express error-handling middleware that converts multer-specific errors
  * into standard API error responses with appropriate HTTP status codes.
  *

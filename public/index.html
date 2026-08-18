@@ -492,7 +492,42 @@
       width: 100%;
       max-width: 100%;
       position: relative;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin: 0.25rem 0 0.5rem;
     }
+
+    .citation-chip {
+      display: inline-block;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      border-radius: 8px;
+      padding: 0.02rem 0.45rem;
+      margin: 0.1rem 0.15rem;
+      font-size: 0.65rem;
+      font-weight: 400;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+      vertical-align: middle;
+    }
+
+    .msg-footer {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      padding-top: 0.6rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.72rem;
+      color: var(--text-tertiary);
+    }
+    .msg-footer .ft-item { display: inline-flex; align-items: center; gap: 0.2rem; }
+    .msg-footer .ft-cost { color: var(--text-secondary); font-weight: 600; }
 
     .assistant-content {
       color: var(--text-primary);
@@ -1926,6 +1961,7 @@ let sessionTotal = 0;
 let isStreaming = false;
 let currentSessionId = null;
 let idrRate = null; // Cached USD → IDR conversion rate
+let currentEmbeddingTokens = 0; // Cohere embedding tokens for the current turn
 
 // ── Chat History Sidebar State ──
 let sessionList = [];                // Array of session objects from API
@@ -2429,6 +2465,11 @@ async function handleSend() {
             outputTokens = data.outputTokens;
             if (data.modelId) executedModelId = data.modelId;
             updateCurrentCost(executedModelId, inputTokens, outputTokens);
+            updateMessageFooter(assistantEl, executedModelId, inputTokens, outputTokens, currentEmbeddingTokens);
+          } else if (eventType === 'embedding') {
+            currentEmbeddingTokens = data.inputTokens || 0;
+            window._knowledgeData = data;
+            updateMessageFooter(assistantEl, executedModelId, inputTokens, outputTokens, currentEmbeddingTokens);
           } else if (eventType === 'routing') {
             try {
             // Routing metadata — populate tech-details inside status panel
@@ -2733,7 +2774,7 @@ async function handleSend() {
 
     // Finalize cost tracking
     if (inputTokens > 0 || outputTokens > 0) {
-      const cost = calculateCost(executedModelId, inputTokens, outputTokens);
+      const cost = calculateCost(executedModelId, inputTokens, outputTokens) + calculateEmbeddingCost(currentEmbeddingTokens);
       sessionCosts.push({ modelId: executedModelId, inputTokens, outputTokens, cost });
       sessionTotal += cost;
       updateSessionDisplay();
@@ -2993,11 +3034,19 @@ function formatMessage(text) {
     return `\x00MATH_BLOCK_${idx}\x00`;
   });
 
+  // Step 1.5: Extract [Sumber: ...] citations into placeholders (rendered as chips later)
+  const citations = [];
+  processed = processed.replace(/\[Sumber:\s*([^\]]+)\]/g, (_m, ref) => {
+    const idx = citations.length;
+    citations.push(ref.trim());
+    return `\x00CITE_${idx}\x00`;
+  });
+
   // Step 2: Run markdown formatting on the processed text
   const html = formatMarkdown(processed);
 
   // Step 3: Replace math placeholders with rendered KaTeX
-  return html.replace(/\x00MATH_BLOCK_(\d+)\x00/g, (_, idx) => {
+  const rendered = html.replace(/\x00MATH_BLOCK_(\d+)\x00/g, (_, idx) => {
     const block = mathBlocks[parseInt(idx)];
     if (typeof katex !== 'undefined') {
       return block.display
@@ -3008,6 +3057,14 @@ function formatMessage(text) {
     return block.display
       ? `<pre class="math-display">${escapeHtml(block.latex)}</pre>`
       : `<code>${escapeHtml(block.latex)}</code>`;
+  });
+
+  // Step 4: Convert citation placeholders into chips (truncated, full text in tooltip)
+  const MAX_CITE = 60;
+  return rendered.replace(/\x00CITE_(\d+)\x00/g, (_m, idx) => {
+    const full = citations[parseInt(idx)] ?? '';
+    const short = full.length > MAX_CITE ? full.slice(0, MAX_CITE).trimEnd() + '…' : full;
+    return `<span class="citation-chip" title="${escapeHtml(full).replace(/"/g, '&quot;')}">📄 ${escapeHtml(short)}</span>`;
   });
 }
 
@@ -3335,6 +3392,21 @@ function toggleRawData() {
     p.push(JSON.stringify(rest, null, 2));
   }
 
+  if (window._knowledgeData) {
+    const kd = window._knowledgeData;
+    p.push('\n=== KNOWLEDGE RETRIEVAL (Cohere Embed v4) ===');
+    p.push('embedding input tokens: ' + (kd.inputTokens ?? 0));
+    const chunks = kd.chunks || [];
+    if (chunks.length > 0) {
+      p.push('retrieved chunks: ' + chunks.length);
+      for (const c of chunks) {
+        p.push('  - [' + (c.bindingLevel || 'untagged') + '] ' + (c.title || 'untitled') + ' (' + (c.docType || '?') + ') relevance=' + Math.round((c.score ?? 0) * 100) + '%');
+      }
+    } else {
+      p.push('retrieved chunks: 0 (no match — prompt sent without knowledge context)');
+    }
+  }
+
   if (window._debugEvents && window._debugEvents.length > 0) {
     p.push('\n=== ORCHESTRATION EVENTS (' + window._debugEvents.length + ') ===');
     for (const evt of window._debugEvents) {
@@ -3563,8 +3635,39 @@ function formatCost(usdAmount) {
   return `$${usdAmount.toFixed(6)}`;
 }
 
+function calculateEmbeddingCost(tokens) {
+  const p = pricingConfig && pricingConfig.models && pricingConfig.models['cohere.embed-v4:0'];
+  if (!p) return 0;
+  return (tokens * p.inputPricePer1MTokens) / 1_000_000;
+}
+
+function updateMessageFooter(assistantEl, modelId, inputTokens, outputTokens, embeddingTokens) {
+  if (!assistantEl) return;
+  let footer = assistantEl.querySelector('.msg-footer');
+  if (!footer) {
+    footer = document.createElement('div');
+    footer.className = 'msg-footer';
+    assistantEl.appendChild(footer);
+  }
+  const llmCost = calculateCost(modelId, inputTokens, outputTokens);
+  const embCost = calculateEmbeddingCost(embeddingTokens || 0);
+  const total = llmCost + embCost;
+  const modelName = modelId ? getModelDisplayName(modelId) : '—';
+  const parts = [
+    `<span class="ft-item">${escapeHtml(modelName)}</span>`,
+    `<span class="ft-item">↑ ${(inputTokens || 0).toLocaleString()}</span>`,
+    `<span class="ft-item">↓ ${(outputTokens || 0).toLocaleString()}</span>`,
+  ];
+  if (embeddingTokens) parts.push(`<span class="ft-item" title="Cohere embedding tokens">🧩 ${embeddingTokens.toLocaleString()}</span>`);
+  parts.push(`<span class="ft-cost">${formatCost(total)}</span>`);
+  footer.innerHTML = parts.join('');
+  footer.style.display = 'flex';
+}
+
 function updateCurrentCost(modelId, inputTokens, outputTokens) {
-  const cost = formatCost(calculateCost(modelId, inputTokens, outputTokens));
+  const llmCost = calculateCost(modelId, inputTokens, outputTokens);
+  const embCost = calculateEmbeddingCost(currentEmbeddingTokens);
+  const cost = formatCost(llmCost + embCost);
   const tokensIn = inputTokens.toLocaleString();
   const tokensOut = outputTokens.toLocaleString();
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };

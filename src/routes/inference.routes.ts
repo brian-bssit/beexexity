@@ -716,6 +716,20 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
     // Knowledge retrieval (Tier 2) — hybrid search with self-timeout; degrades to [] on failure.
     const knowledgeChunks = await knowledgeSearch(effectivePrompt, config.knowledge.topK);
 
+    // Cohere Embed v4 usage: the retrieval query is embedded once per turn (input tokens ≈ chars/4).
+    const embeddingInputTokens = Math.ceil(effectivePrompt.length / 4);
+    res.write(`event: embedding\ndata: ${JSON.stringify({
+      inputTokens: embeddingInputTokens,
+      chunks: knowledgeChunks.map((c) => ({
+        id: c.id,
+        title: c.title,
+        docType: c.docType,
+        score: c.score,
+        bindingLevel: c.bindingLevel,
+        sourceType: c.sourceType,
+      })),
+    })}\n\n`);
+
     const passthroughRole = 'a helpful assistant';
     const conversationRequest: ConversationInferenceRequest = {
       messages: conversationMessages,
@@ -942,6 +956,7 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         routingIntent: routingDecision?.contract?.intent,
         sessionContext: routingDecision?.sessionContext,
         knowledgeSourceIds: knowledgeChunks.map((c) => c.id),
+        embeddingInputTokens,
       }).catch(() => { /* fire-and-forget */ });
 
       // 14. Memory update if messages were evicted (fire-and-forget)
