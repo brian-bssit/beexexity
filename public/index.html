@@ -32,7 +32,7 @@
       --bg-tertiary: #e8f0f0;
       --text-primary: #1d3557;
       --text-secondary: #457b9d;
-      --text-tertiary: #8ba0b8;
+      --text-tertiary: #5a6b7a;
       --accent: #e63946;
       --accent-hover: #c92e3a;
       --border: #d0e0e0;
@@ -93,7 +93,7 @@
     }
 
     .login-box input:focus {
-      outline: none;
+      outline: 2px solid var(--accent); outline-offset: 2px;
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(230, 57, 70, 0.15);
     }
@@ -178,7 +178,7 @@
     }
 
     .password-reset-box input:focus {
-      outline: none;
+      outline: 2px solid var(--accent); outline-offset: 2px;
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(230, 57, 70, 0.15);
     }
@@ -720,7 +720,7 @@
       font-weight: 400;
     }
     .assistant-text-content ul li::before {
-      content: "—";
+      content: "•";
       position: absolute;
       left: 0;
       color: var(--text-tertiary);
@@ -744,8 +744,8 @@
       content: counter(item) ".";
       position: absolute;
       left: 0;
-      font-weight: 600;
-      color: var(--accent);
+      font-weight: 500;
+      color: var(--text-secondary);
       min-width: 1.25rem;
     }
 
@@ -1030,7 +1030,7 @@
     }
 
     [data-theme="dark"] .input-area:focus-within {
-      border-color: var(--accent);
+      border-color: #457b9d;
       box-shadow: 0 0 0 3px rgba(181, 228, 247, 0.08);
     }
 
@@ -1070,7 +1070,8 @@
       resize: none;
       font-family: inherit;
       min-height: 24px;
-      max-height: 200px;
+      max-height: 40vh;
+      overflow-y: auto;
       line-height: 1.5;
     }
 
@@ -1122,8 +1123,8 @@
     }
 
     .input-controls select:focus {
-      outline: none;
-      border-color: var(--accent);
+      outline: 2px solid #457b9d; outline-offset: 2px;
+      border-color: #457b9d;
     }
 
     #send-btn {
@@ -1909,20 +1910,20 @@
         <div class="input-area" id="input-area">
           <div class="drop-zone-overlay" id="drop-zone"><span>Drop files here</span></div>
           <input type="file" id="file-input" multiple accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.webp,.html,.md,.json,.csv,.txt,.xml" style="display:none" onchange="handleFilePicker(event)">
-          <button class="attach-btn" id="attach-btn" onclick="document.getElementById('file-input').click()" title="Attach files">
+          <button class="attach-btn" id="attach-btn" onclick="document.getElementById('file-input').click()" title="Attach files" aria-label="Lampirkan file">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"></line>
               <line x1="5" y1="12" x2="19" y2="12"></line>
             </svg>
           </button>
 
-          <textarea id="prompt-input" placeholder="Siap Ditanya ! Silahkan ...." rows="1" onkeydown="handleKeyDown(event)"></textarea>
+          <textarea id="prompt-input" placeholder="Siap Ditanya ! Silahkan ...." rows="1" aria-label="Tulis pertanyaan Anda" onkeydown="handleKeyDown(event)"></textarea>
 
           <div class="input-controls">
             <div class="model-select-wrapper">
-              <select id="model-select" onchange="checkModelCompatibility()"></select>
+              <select id="model-select" aria-label="Pilih model" onchange="checkModelCompatibility()"></select>
             </div>
-            <button id="send-btn" onclick="handleSend()" title="Send">
+            <button id="send-btn" onclick="handleSend()" title="Send" aria-label="Kirim pesan">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13"></line>
                 <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
@@ -1931,8 +1932,8 @@
           </div>
         </div>
         <div class="file-preview-area" id="file-preview-area"></div>
-        <div class="model-compat-warning" id="model-compat-warning">⚠ Selected model does not support image inputs</div>
-        <div class="file-error-area" id="file-error-area"></div>
+        <div class="model-compat-warning" id="model-compat-warning" role="alert">⚠ Selected model does not support image inputs</div>
+        <div class="file-error-area" id="file-error-area" role="alert"></div>
         <div class="input-disclaimer">AI can make mistakes. Consider verifying important information.</div>
         <div id="session-id-display" style="font-size:0.65rem;color:var(--text-tertiary);text-align:center;padding:0.25rem 0;display:none">
           <span id="session-id-text"></span>
@@ -4017,7 +4018,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const ta = document.getElementById('prompt-input');
   ta.addEventListener('input', () => {
     ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+    ta.style.height = ta.scrollHeight + 'px';
   });
 
   // --- Drag and Drop Setup ---
