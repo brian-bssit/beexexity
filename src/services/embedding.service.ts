@@ -26,12 +26,30 @@ export async function generateEmbedding(
   text: string,
   inputType: 'search_document' | 'search_query' = 'search_document',
 ): Promise<Float32Array> {
+  return (await generateEmbeddings([text], inputType))[0]!;
+}
+
+/**
+ * Generate embeddings for many texts in a single Cohere Embed v4 call.
+ * Replaces N sequential calls (ingestion of large docs → ~250 chunks) with
+ * ~ceil(N/96) round-trips.
+ *
+ * @param texts - Texts to embed (up to 96 per call)
+ * @param inputType - 'search_document' for indexing, 'search_query' for retrieval
+ * @param timeoutMs - Per-call abort timeout (defaults to config.knowledge.embeddingTimeoutMs)
+ */
+export async function generateEmbeddings(
+  texts: string[],
+  inputType: 'search_document' | 'search_query' = 'search_document',
+  timeoutMs: number = config.knowledge.embeddingTimeoutMs,
+): Promise<Float32Array[]> {
+  if (texts.length === 0) return [];
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.knowledge.embeddingTimeoutMs);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const body = JSON.stringify({
-      texts: [text],
+      texts,
       input_type: inputType,
       embedding_types: ['float'],
     });
@@ -47,15 +65,22 @@ export async function generateEmbedding(
     const parsed = JSON.parse(new TextDecoder().decode(response.body)) as {
       embeddings?: { float?: number[][] };
     };
-    const embedding = parsed.embeddings?.float?.[0];
+    const embeddings = parsed.embeddings?.float;
 
-    if (!Array.isArray(embedding) || embedding.length !== config.knowledge.embeddingDimensions) {
+    if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
       throw new Error(
-        `Embedding dimension mismatch: expected ${config.knowledge.embeddingDimensions}, got ${Array.isArray(embedding) ? embedding.length : 'none'}`,
+        `Embedding count mismatch: expected ${texts.length}, got ${Array.isArray(embeddings) ? embeddings.length : 'none'}`,
       );
     }
+    for (const embedding of embeddings) {
+      if (!Array.isArray(embedding) || embedding.length !== config.knowledge.embeddingDimensions) {
+        throw new Error(
+          `Embedding dimension mismatch: expected ${config.knowledge.embeddingDimensions}, got ${Array.isArray(embedding) ? embedding.length : 'none'}`,
+        );
+      }
+    }
 
-    return Float32Array.from(embedding);
+    return embeddings.map((e) => Float32Array.from(e));
   } finally {
     clearTimeout(timeout);
   }

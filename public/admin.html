@@ -319,13 +319,17 @@
         <div class="form-row">
           <div><label>Doc Type *</label><select id="kb-doctype">
             <option value="SOP">SOP</option><option value="MEMO">MEMO</option><option value="REGULATION">REGULATION</option>
-            <option value="PRODUCT_FAQ">PRODUCT_FAQ</option><option value="HKR">HKR</option><option value="HUK">HUK</option>
-            <option value="AUDIT">AUDIT</option><option value="JUKNIS">JUKNIS</option><option value="BRD">BRD</option><option value="FSD">FSD</option>
-            <option value="PKS">PKS</option><option value="UAT">UAT</option><option value="SIT">SIT</option>
-            <option value="OTHER">OTHER</option>
+            <option value="PKS">PKS</option><option value="JUKNIS">JUKNIS</option>
+            <option value="BRD">BRD</option><option value="FSD">FSD</option>
+            <option value="PROJECT_CHARTER">PROJECT_CHARTER</option><option value="IT_RD">IT_RD</option><option value="HCP">HCP</option>
+            <option value="CAB">CAB</option><option value="ADR">ADR</option><option value="SAF">SAF</option>
+            <option value="HKR">HKR</option><option value="HUK">HUK</option>
+            <option value="AUDIT">AUDIT</option><option value="UAT">UAT</option><option value="SIT">SIT</option>
+            <option value="PRODUCT_FAQ">PRODUCT_FAQ</option>
           </select></div>
           <div><label>Binding Level</label><select id="kb-binding">
-            <option value="regulatory">regulatory</option><option value="advisory">advisory</option><option value="commentary">commentary</option>
+            <option value="regulatory">regulatory</option><option value="contractual">contractual</option><option value="procedural">procedural</option>
+            <option value="directive">directive</option><option value="assessment">assessment</option><option value="informational">informational</option><option value="other">other</option>
           </select></div>
         </div>
         <div class="form-row">
@@ -1101,7 +1105,7 @@
     async function pollKnowledgeJob(id) {
       const status = document.getElementById('kb-upload-status');
       const btn = document.getElementById('kb-upload-btn');
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 120; i++) {
         await new Promise(r => setTimeout(r, 1000));
         try {
           const res = await fetch(API_BASE + '/knowledge/documents/' + id + '/status', { headers: { 'Authorization': `Bearer ${token}` } });

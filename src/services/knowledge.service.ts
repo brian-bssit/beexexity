@@ -7,7 +7,7 @@
 
 import { query } from '../config/database.js';
 import { config } from '../config/index.js';
-import { generateEmbedding, embeddingToSql, hashContent } from './embedding.service.js';
+import { generateEmbeddings, embeddingToSql, hashContent } from './embedding.service.js';
 import type {
   IndexDocumentParams,
   IndexDocumentResult,
@@ -46,6 +46,8 @@ interface KnowledgeRow {
   content: string;
   title: string | null;
   doc_type: string | null;
+  binding_level: string | null;
+  source_type: string | null;
   metadata: Record<string, unknown> | null;
   score?: number;
 }
@@ -58,15 +60,26 @@ function mapChunk(row: KnowledgeRow): KnowledgeChunk {
     title: row.title ?? 'untitled',
     docType: row.doc_type ?? 'unknown',
     score: row.score ?? 0,
-    bindingLevel: (metadata.binding_level as string | undefined) ?? null,
-    sourceType: (metadata.source_type as string | undefined) ?? null,
+    bindingLevel: row.binding_level ?? null,
+    sourceType: row.source_type ?? null,
     metadata,
   };
 }
 
-/** Deterministic ordering: regulatory sources always rank above advisory/commentary. */
-const BINDING_LEVEL_ORDER = `CASE COALESCE(metadata->>'binding_level', 'commentary')
-  WHEN 'regulatory' THEN 0 WHEN 'advisory' THEN 1 ELSE 2 END`;
+/** Deterministic ordering: more-binding sources rank first (regulatory → other). */
+const BINDING_LEVEL_ORDER = `CASE COALESCE(binding_level, 'informational')
+  WHEN 'regulatory' THEN 0
+  WHEN 'contractual' THEN 1
+  WHEN 'procedural' THEN 2
+  WHEN 'directive' THEN 3
+  WHEN 'assessment' THEN 4
+  WHEN 'informational' THEN 5
+  ELSE 6 END`;
+
+/** Legacy classification value remapping (pre-migration 030 → closed enum). */
+const DOC_TYPE_MAP: Record<string, string> = { FAQ: 'PRODUCT_FAQ', OTHER: 'MEMO', DOC: 'MEMO' };
+const BINDING_LEVEL_MAP: Record<string, string> = { advisory: 'procedural', commentary: 'informational' };
+const SENSITIVITY_MAP: Record<string, string> = { confidential: 'restricted' };
 
 /** Common stopwords + question words — dropped from keyword queries. */
 const STOPWORDS = new Set([
@@ -89,11 +102,11 @@ function tokenizeKeywords(text: string): string[] {
 }
 
 async function searchInternal(queryText: string, topK: number): Promise<KnowledgeChunk[]> {
-  const embedding = await generateEmbedding(queryText, 'search_query');
+  const embedding = (await generateEmbeddings([queryText], 'search_query'))[0]!;
   const vec = embeddingToSql(embedding);
 
   const { rows } = await query<KnowledgeRow>(
-    `SELECT id, content, title, doc_type, metadata,
+    `SELECT id, content, title, doc_type, binding_level, source_type, metadata,
             1 - (embedding <=> $1::vector) AS score
      FROM knowledge_documents
      WHERE embedding IS NOT NULL
@@ -113,7 +126,7 @@ async function searchInternal(queryText: string, topK: number): Promise<Knowledg
     const orClauses = keywords.map((_, i) => `content ILIKE $${i + 1}`).join(' OR ');
     const matchScore = keywords.map((_, i) => `(content ILIKE $${i + 1})::int`).join(' + ');
     const { rows: kwRows } = await query<KnowledgeRow>(
-      `SELECT id, content, title, doc_type, metadata
+      `SELECT id, content, title, doc_type, binding_level, source_type, metadata
        FROM knowledge_documents
        WHERE ${orClauses}
        ORDER BY (${matchScore}) DESC, ${BINDING_LEVEL_ORDER}, created_at DESC
@@ -159,47 +172,71 @@ export async function indexDocument(params: IndexDocumentParams): Promise<IndexD
   if (params.effectiveDate) metadata.effective_date = params.effectiveDate;
   if (params.expiryDate) metadata.expiry_date = params.expiryDate;
   if (params.domain) metadata.domain = params.domain;
-  if (params.sensitivity) metadata.sensitivity = params.sensitivity;
   if (params.jurisdiction) metadata.jurisdiction = params.jurisdiction;
-  if (params.sourceType) metadata.source_type = params.sourceType;
-  if (params.bindingLevel) metadata.binding_level = params.bindingLevel;
+
+  // Normalize legacy classification values to the closed enum (migration 030).
+  const docType = DOC_TYPE_MAP[params.docType.toUpperCase()] ?? params.docType;
+  const bindingLevel = params.bindingLevel
+    ? (BINDING_LEVEL_MAP[params.bindingLevel] ?? params.bindingLevel)
+    : null;
+  const sensitivity = params.sensitivity
+    ? (SENSITIVITY_MAP[params.sensitivity] ?? params.sensitivity)
+    : null;
 
   let firstId = '';
   let inserted = 0;
 
-  for (let i = 0; i < chunks.length; i++) {
-    const contentHash = hashContent(chunks[i]!);
+  // Dedup in one query, then bulk-embed only the new chunks (large docs →
+  // hundreds of chunks; batching keeps it to a handful of Bedrock calls).
+  const hashes = chunks.map((c) => hashContent(c));
+  const { rows: existing } = await query<{ content_hash: string }>(
+    'SELECT content_hash FROM knowledge_documents WHERE content_hash = ANY($1::text[])',
+    [hashes],
+  );
+  const existingSet = new Set(existing.map((r) => r.content_hash));
+  const newChunks = chunks
+    .map((content, i) => ({ content, index: i, contentHash: hashes[i]! }))
+    .filter((c) => !existingSet.has(c.contentHash));
 
-    const existing = await query<{ id: string }>(
-      'SELECT id FROM knowledge_documents WHERE content_hash = $1 LIMIT 1',
-      [contentHash],
+  for (let i = 0; i < newChunks.length; i += config.knowledge.embedBatchSize) {
+    const batch = newChunks.slice(i, i + config.knowledge.embedBatchSize);
+    const embeddings = await generateEmbeddings(
+      batch.map((c) => c.content),
+      'search_document',
+      config.knowledge.embeddingBatchTimeoutMs,
     );
-    if (existing.rows.length > 0) {
-      console.log(`[knowledge] Skipped duplicate: ${params.title} chunk ${i}`);
-      continue;
-    }
 
-    const embedding = await generateEmbedding(chunks[i]!);
-    const { rows } = await query<{ id: string }>(
-      `INSERT INTO knowledge_documents
-        (source_file, doc_type, title, chunk_index, content, content_hash, embedding, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8::jsonb)
-       RETURNING id`,
-      [
-        params.sourceFile,
-        params.docType,
-        params.title,
-        i,
-        chunks[i]!,
-        contentHash,
-        embeddingToSql(embedding),
-        JSON.stringify(metadata),
-      ],
-    );
-    if (rows[0]) {
-      if (!firstId) firstId = rows[0].id;
-      inserted++;
+    for (let j = 0; j < batch.length; j++) {
+      const chunk = batch[j]!;
+      const { rows } = await query<{ id: string }>(
+        `INSERT INTO knowledge_documents
+          (source_file, doc_type, title, chunk_index, content, content_hash, embedding, metadata,
+           binding_level, source_type, sensitivity)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8::jsonb, $9, $10, $11)
+         RETURNING id`,
+        [
+          params.sourceFile,
+          docType,
+          params.title,
+          chunk.index,
+          chunk.content,
+          chunk.contentHash,
+          embeddingToSql(embeddings[j]!),
+          JSON.stringify(metadata),
+          bindingLevel,
+          params.sourceType ?? null,
+          sensitivity,
+        ],
+      );
+      if (rows[0]) {
+        if (!firstId) firstId = rows[0].id;
+        inserted++;
+      }
     }
+  }
+
+  if (chunks.length > newChunks.length) {
+    console.log(`[knowledge] Skipped ${chunks.length - newChunks.length} duplicate chunk(s): ${params.title}`);
   }
 
   return { id: firstId, chunkIndex: inserted };

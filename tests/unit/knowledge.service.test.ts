@@ -31,7 +31,9 @@ const CHUNK_ROW = {
   content: 'isi dokumen',
   title: 'SOP Pengajuan Kredit',
   doc_type: 'SOP',
-  metadata: { binding_level: 'regulatory', source_type: 'internal' },
+  binding_level: 'regulatory',
+  source_type: 'internal',
+  metadata: {},
   score: 0.82,
 };
 
@@ -95,10 +97,22 @@ describe('search', () => {
 });
 
 describe('indexDocument', () => {
+  /** Bedrock mock: echoes one embedding per requested text (handles batching). */
+  function mockEmbeddingApi(): void {
+    mockSend.mockImplementation(async (input: { body: string }) => {
+      const n = JSON.parse(input.body).texts.length;
+      return {
+        body: new Uint8Array(Buffer.from(JSON.stringify({
+          embeddings: { float: Array.from({ length: n }, () => Array.from({ length: DIMS }, () => 0.1)) },
+        }))),
+      };
+    });
+  }
+
   it('chunks, embeds, dedups, and inserts', async () => {
-    mockEmbedding();
+    mockEmbeddingApi();
     vi.mocked(query)
-      // dedup check — none exists
+      // bulk dedup — none exists
       .mockResolvedValueOnce({ rows: [] })
       // insert — returns id
       .mockResolvedValueOnce({ rows: [{ id: 'new-id' }] });
@@ -113,11 +127,16 @@ describe('indexDocument', () => {
 
     expect(result.id).toBe('new-id');
     expect(result.chunkIndex).toBe(1);
+
+    const dedupSql = vi.mocked(query).mock.calls[0]![0] as string;
+    expect(dedupSql).toMatch(/content_hash = ANY\(\$1::text\[\]\)/);
   });
 
-  it('skips duplicate chunks by content hash', async () => {
-    mockEmbedding();
-    vi.mocked(query).mockResolvedValueOnce({ rows: [{ id: 'existing' }] }); // dedup hit
+  it('skips duplicate chunks by content hash (no embed call)', async () => {
+    vi.mocked(query).mockImplementation(async (_sql: string, params: unknown[]) => {
+      // every requested hash already exists → all chunks deduped
+      return { rows: (params[0] as string[]).map((content_hash) => ({ content_hash })) };
+    });
 
     const result = await indexDocument({
       content: 'konten yang sama persis',
@@ -127,16 +146,16 @@ describe('indexDocument', () => {
     });
 
     expect(result.chunkIndex).toBe(0); // nothing inserted
-    expect(vi.mocked(query)).toHaveBeenCalledTimes(1); // only the dedup SELECT
+    expect(mockSend).not.toHaveBeenCalled(); // no embedding for dupes
   });
 
-  it('splits long content into multiple chunks', async () => {
+  it('splits long content into multiple chunks and batches the embedding', async () => {
     const longContent = `${'kalimat. '.repeat(1200)}`; // ~9.6K chars → multiple chunks
 
-    mockEmbedding();
+    mockEmbeddingApi();
     let insertCount = 0;
     vi.mocked(query).mockImplementation(async (sql: string) => {
-      if (sql.startsWith('SELECT id FROM knowledge_documents WHERE content_hash')) {
+      if (sql.includes('content_hash = ANY')) {
         return { rows: [] }; // dedup miss — no duplicates
       }
       insertCount++;

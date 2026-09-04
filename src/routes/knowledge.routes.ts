@@ -58,14 +58,14 @@ Given a document's text, return ONLY valid JSON with these keys:
   • For a memo: the memo subject.
   • For a FAQ: the topic it answers.
   • Never return a generic label like "document", "download", or "untitled".
-- "doc_type": exactly one of SOP, MEMO, REGULATION, PRODUCT_FAQ, HKR, HUK, AUDIT, JUKNIS, BRD, FSD, PKS, UAT, SIT, OTHER
-- "binding_level": exactly one of regulatory, advisory, commentary
+- "doc_type": exactly one of SOP, MEMO, REGULATION, PRODUCT_FAQ, HKR, HUK, AUDIT, JUKNIS, BRD, FSD, PKS, UAT, SIT, PROJECT_CHARTER, IT_RD, HCP, CAB, ADR, SAF
+- "binding_level": exactly one of regulatory, contractual, procedural, directive, assessment, informational, other
 - "source_type": exactly one of official, internal, hukumonline
 - "sensitivity": exactly one of internal, restricted, public
 
 Classification rules:
-- binding_level: "regulatory" for laws/regulations; "advisory" for SOP/procedures/guidelines; "commentary" for FAQ/interpretations/analysis.
-- source_type: "official" for regulatory/government texts; "internal" for bank internal documents; "hukumonline" for third-party legal commentary.
+- binding_level: "regulatory" for external laws/regulations; "contractual" for agreements/contracts; "procedural" for SOP/internal rules; "directive" for project/IT specifications; "assessment" for risk/compliance reviews; "informational" for FAQ/reference/knowledge; "other" for operational records/test evidence.
+- source_type: "official" for regulatory/government texts; "internal" for bank internal documents; "hukumonline" for third-party legal commentary (→ binding_level must be "informational").
 - sensitivity: "public" only if the document is a published regulation/FAQ; "restricted" if it contains confidential/risk details; otherwise "internal".`;
 
 /** Call qwen3-235b to suggest metadata from document text. Returns null on any failure. */

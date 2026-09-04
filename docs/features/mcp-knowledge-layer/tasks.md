@@ -71,3 +71,14 @@
 - [x] **6.5** `pricing-config.json` — `cohere.embed-v4:0` ($0.12/1M input). [cost accuracy]
 
 **Checkpoint — `npm test` (439 pass) pass; live: `embedding_input_tokens` + snapshot terekam di audit_logs.**
+
+---
+
+## Phase 7 — Metadata Schema: Closed Enum + Column Promotion
+
+- [x] **7.1** Migration 030: promote `binding_level`/`source_type`/`sensitivity` ke kolom + CHECK constraints (19 doc_type, 7 binding_level). [Req 1.4, 1.5]
+- [x] **7.2** `knowledge.service.ts` — baca/tulis kolom, `BINDING_LEVEL_ORDER` 7-value, normalize legacy value (advisory→procedural, commentary→informational, FAQ→PRODUCT_FAQ). [Req 6]
+- [x] **7.3** `knowledge.routes.ts` — AI prompt 19 doc_type + 7 binding_level. [Req 4.3]
+- [x] **7.4** `admin.html` — select 19 doc_type + 7 binding_level. [Req 4.1]
+
+**Checkpoint — `npm test` (439 pass); live: search baca kolom binding_level, ranking 7-value.**

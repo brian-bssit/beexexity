@@ -133,6 +133,10 @@ export const config = {
     embeddingDimensions: 1536,
     /** Timeout per embedding call. */
     embeddingTimeoutMs: parseInt(process.env.EMBEDDING_TIMEOUT_MS || '2000', 10),
+    /** Chunks embedded per Bedrock call during ingestion. */
+    embedBatchSize: parseInt(process.env.KNOWLEDGE_EMBED_BATCH_SIZE || '32', 10),
+    /** Timeout for a batched ingestion embedding call. */
+    embeddingBatchTimeoutMs: parseInt(process.env.EMBEDDING_BATCH_TIMEOUT_MS || '15000', 10),
     /** Timeout for knowledge retrieval during inference. */
     searchTimeoutMs: parseInt(process.env.KNOWLEDGE_SEARCH_TIMEOUT_MS || '2000', 10),
     /** Chunk size in tokens (~4 chars per token). */
