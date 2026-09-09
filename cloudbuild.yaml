@@ -52,7 +52,10 @@ steps:
       - '--set-env-vars'
       - 'NODE_ENV=production,AWS_REGION=ap-southeast-3,DB_HOST=${_DB_HOST},DB_PORT=5432,DB_NAME=bedrock_gateway,DB_USER=${_DB_USER},DB_SSL=true,GOTENBERG_URL=${_GOTENBERG_URL},TIER3_ENABLED=true,TIER3_BASE_URL=${_TIER3_BASE_URL}'
       - '--set-secrets'
-      - 'DB_PASSWORD=db-password:latest,JWT_SECRET=jwt-secret:latest,AWS_ACCESS_KEY_ID=aws-access-key-id:latest,AWS_SECRET_ACCESS_KEY=aws-secret-access-key:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_DRIVE_CLIENT_ID=google-drive-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,TIER3_API_KEY=tier3-api-key:latest'
+      - 'DB_PASSWORD=db-password:latest,JWT_SECRET=jwt-secret:latest,AWS_ACCESS_KEY_ID=aws-access-key-id:latest,AWS_SECRET_ACCESS_KEY=aws-secret-access-key:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,TIER3_API_KEY=tier3-api-key:latest'
+      # NB: GOOGLE_DRIVE_CLIENT_ID sengaja TIDAK di-set — Drive auth falls back ke GOOGLE_CLIENT_ID
+      # (auth.routes.ts clientId = driveClientId || clientId), sama seperti local. Jadi cukup
+      # GOOGLE_CLIENT_SECRET yang cocok dgn client GOOGLE_CLIENT_ID + redirect URI terdaftar.
 
 substitutions:
   _REGION: asia-southeast2
