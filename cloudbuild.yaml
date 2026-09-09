@@ -50,18 +50,22 @@ steps:
       - '80'
       - '--allow-unauthenticated'
       - '--set-env-vars'
-      - 'NODE_ENV=production,AWS_REGION=ap-southeast-3,DB_HOST=${_DB_HOST},DB_PORT=5432,DB_NAME=bedrock_gateway,DB_USER=${_DB_USER},DB_SSL=true,GOTENBERG_URL=${_GOTENBERG_URL}'
+      - 'NODE_ENV=production,AWS_REGION=ap-southeast-3,DB_HOST=${_DB_HOST},DB_PORT=5432,DB_NAME=bedrock_gateway,DB_USER=${_DB_USER},DB_SSL=true,GOTENBERG_URL=${_GOTENBERG_URL},TIER3_ENABLED=true,TIER3_BASE_URL=${_TIER3_BASE_URL}'
       - '--set-secrets'
-      - 'DB_PASSWORD=db-password:latest,JWT_SECRET=jwt-secret:latest,AWS_ACCESS_KEY_ID=aws-access-key-id:latest,AWS_SECRET_ACCESS_KEY=aws-secret-access-key:latest,GOOGLE_CLIENT_ID=google-client-id:latest'
+      - 'DB_PASSWORD=db-password:latest,JWT_SECRET=jwt-secret:latest,AWS_ACCESS_KEY_ID=aws-access-key-id:latest,AWS_SECRET_ACCESS_KEY=aws-secret-access-key:latest,GOOGLE_CLIENT_ID=google-client-id:latest,TIER3_API_KEY=tier3-api-key:latest'
 
 substitutions:
   _REGION: asia-southeast2
   _SERVICE_NAME: beexexity
   _ARTIFACT_REGISTRY: asia-southeast2-docker.pkg.dev
   _TAG: latest
-  _DB_HOST: ''     # set in Cloud Build trigger → Variables
-  _DB_USER: ''     # set in Cloud Build trigger → Variables
+  # DB defaults baked here so ANY rebuild (trigger vars empty/cleared) still reaches the
+  # shared Cloud SQL instance — an empty DB_HOST previously fell back to 'localhost' and
+  # prod threw ECONNREFUSED 127.0.0.1:5432. Override per environment in the trigger if needed.
+  _DB_HOST: '34.101.75.59'     # Cloud SQL public IP
+  _DB_USER: 'postgres'
   _GOTENBERG_URL: ''      # set after Gotenberg deploy → Variables
+  _TIER3_BASE_URL: 'https://api.deepseek.com'   # external OpenAI-compatible gateway (DeepSeek)
 
 images:
   - '${_ARTIFACT_REGISTRY}/${PROJECT_ID}/${_SERVICE_NAME}/${_SERVICE_NAME}:${_TAG}'
