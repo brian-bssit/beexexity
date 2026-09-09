@@ -6,6 +6,16 @@ import 'dotenv/config';
  * Database is GCP Cloud SQL (public IP).
  */
 
+/** Default private Tier-1 Bedrock model (routed auto model). Single source. */
+const DEFAULT_PRIVATE_MODEL = 'qwen.qwen3-235b-a22b-2507-v1:0';
+
+/** Parse an int env with sane bounds — malformed/missing → default, never NaN/throw. */
+function intEnv(name: string, def: number, min: number, max: number): number {
+  const v = parseInt(process.env[name] || '', 10);
+  if (Number.isNaN(v)) return def;
+  return Math.min(max, Math.max(min, v));
+}
+
 export const config = {
   aws: {
     region: 'ap-southeast-3',
@@ -43,6 +53,38 @@ export const config = {
     classifierTimeoutMs: parseInt(
       process.env.ROUTING_CLASSIFIER_TIMEOUT_MS || '2000', 10
     ),
+    /** Fixed model used when routingState = 'auto' (deterministic — no LLM routing). */
+    autoModelId: process.env.AUTO_MODEL_ID || DEFAULT_PRIVATE_MODEL,
+    /** Restricted (T1) private Bedrock model — empty → autoModelId. */
+    tier1ModelId: process.env.TIER1_MODEL_ID || '',
+    /** Tier-3 external OpenAI-compatible gateway (auto-only). Key lives in env only. */
+    externalTier3: {
+      baseUrl: process.env.TIER3_BASE_URL || '',
+      apiKey: process.env.TIER3_API_KEY || '',
+      enabled: process.env.TIER3_ENABLED === 'true',
+      /** Model-family prefixes that get ReAct tools + thinking params. Default DeepSeek. */
+      toolModelPrefixes: (process.env.TIER3_TOOL_MODEL_PREFIXES || 'deepseek-v4-')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      /** Extra top-level body params for thinking-capable allowlisted models (e.g. {"enable_thinking":true} for Qwen on SumoPod). Placement per gateway — confirm via spike before enabling. */
+      thinkingParams: (() => {
+        try {
+          const v = JSON.parse(process.env.TIER3_THINKING_PARAMS || '{}');
+          return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+        } catch { return {}; }
+      })(),
+    },
+    /** Tier-1 private-Bedrock tool loop (multi-hop RAG). Default OFF — zero behavior change. */
+    tier1Tools: {
+      enabled: process.env.TIER1_TOOLS_ENABLED === 'true',
+      /** Allowlisted model that receives tools — empty → routed auto model (qwen3-235b). */
+      modelId: process.env.TIER1_TOOLS_MODEL_ID || '',
+      maxIterations: intEnv('TIER1_MAX_TOOL_ITERATIONS', 3, 1, 10),
+      toolTimeoutMs: intEnv('TIER1_TOOL_TIMEOUT_MS', 30000, 1000, 120000),
+      /** Tool-result count cap (chunks returned in full — never char-truncated). */
+      toolTopK: intEnv('TIER1_TOOL_TOP_K', 3, 1, 10),
+    },
   },
   gotenberg: {
     /** URL of the Gotenberg sidecar service for legacy Office format conversion (.doc, .ppt). */
@@ -73,7 +115,14 @@ export const config = {
     ),
   },
   google: {
+    /** Google OAuth 2.0 client ID for login (GIS, OIDC, public client). */
     clientId: process.env.GOOGLE_CLIENT_ID || '',
+    /** Google OAuth 2.0 Web Client ID for Drive API (confidential client). */
+    driveClientId: process.env.GOOGLE_DRIVE_CLIENT_ID || '',
+    /** Google OAuth 2.0 Web Client secret for Drive API. */
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    /** Drive API fetch timeout in ms. */
+    driveTimeoutMs: parseInt(process.env.GOOGLE_DRIVE_TIMEOUT_MS || '10000', 10),
   },
   auth: {
     minPasswordLength: parseInt(process.env.MIN_PASSWORD_LENGTH || '8', 10),
@@ -94,18 +143,6 @@ export const config = {
     timeoutMs: parseInt(process.env.SUBAGENT_TIMEOUT_MS || '120000', 10),
     /** Max tokens per agent before per-agent summarization is triggered. */
     tokenBudget: parseInt(process.env.SUBAGENT_TOKEN_BUDGET || '30000', 10),
-  },
-  orchestration: {
-    /** Max steps in a sequential reasoning plan (2-10). */
-    maxSequentialSteps: parseInt(process.env.MAX_SEQUENTIAL_STEPS || '6', 10),
-    /** Char threshold for map-reduce — documents larger trigger Step 1 Data Cruncher. */
-    largeDocumentThreshold: parseInt(process.env.LARGE_DOCUMENT_THRESHOLD || '50000', 10),
-    /** Max wall-clock for full orchestration before abort. */
-    orchestrationTimeoutMs: parseInt(process.env.ORCHESTRATION_TIMEOUT_MS || '120000', 10),
-    /** Max attempts per step before skipping. */
-    stepRetryCount: parseInt(process.env.STEP_RETRY_COUNT || '2', 10),
-    /** Emit interim synthesis every N steps (0 = disabled). */
-    progressiveInterval: parseInt(process.env.PROGRESSIVE_INTERVAL || '3', 10),
   },
   pptx: {
     /** URL of the python-pptx microservice (Cloud Run internal URL). */
@@ -145,9 +182,9 @@ export const config = {
     chunkOverlapTokens: parseInt(process.env.KNOWLEDGE_CHUNK_OVERLAP || '100', 10),
     /** Max chunks injected into the system prompt during inference. */
     topK: parseInt(process.env.KNOWLEDGE_TOP_K || '5', 10),
-    /** Below this cosine score, semantic results are considered noise → keyword fallback. */
-    hybridThreshold: parseFloat(process.env.KNOWLEDGE_HYBRID_THRESHOLD || '0.4'),
-    /** Below this score, results are not injected into the prompt. */
-    minRelevanceScore: parseFloat(process.env.KNOWLEDGE_MIN_SCORE || '0.3'),
+    /** Cosine gate for retrieval: below this, the KB is treated as "not covering" the
+     *  query → empty result → sovereign routing escalates open text to Tier 3. Calibrated
+     *  to this corpus: genuine in-domain queries score ≥0.40, out-of-domain ≤0.33. */
+    minRelevanceScore: parseFloat(process.env.KNOWLEDGE_MIN_SCORE || '0.4'),
   },
 } as const;

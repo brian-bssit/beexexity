@@ -4,7 +4,7 @@ import { forcePasswordResetMiddleware } from '../middleware/password-reset.middl
 import { inferenceRateLimit } from '../middleware/security.middleware.js';
 import { uploadMiddleware, multerErrorHandler } from '../middleware/upload.middleware.js';
 import { mask } from '../services/pii-masker.service.js';
-import { validateModelId, generate, invokeNovaForOCR, repairResponse, semanticJudge, InferenceError } from '../services/inference.service.js';
+import { validateModelId, generate, invokeNovaForOCR, InferenceError } from '../services/inference.service.js';
 import { validateAndClassifyFiles } from '../services/upload-validator.service.js';
 import { supportsImages, getVisionModels } from '../config/model-capabilities.js';
 import { extractDocumentText } from '../services/document-extractor.service.js';
@@ -12,7 +12,7 @@ import { processImages } from '../services/image-processor.service.js';
 import { buildContentBlocks } from '../services/content-builder.service.js';
 import { auditService } from '../services/audit.service.js';
 import { configService } from '../services/config.service.js';
-import { routeRequest, verifyOutput, getDefaultFormatTemplate } from '../services/routing-engine.service.js';
+import { routeRequest } from '../services/routing-engine.service.js';
 import {
   getActiveSession,
   getSessionMessages,
@@ -27,17 +27,24 @@ import {
 import { buildContext, buildKnowledgeSection } from '../services/context-assembly.service.js';
 import type { ContextConfig } from '../services/context-assembly.service.js';
 import { search as knowledgeSearch } from '../services/knowledge.service.js';
+import { streamExternalCompletion } from '../services/external-chat.service.js';
+import { AVAILABLE_TOOLS } from '../services/tool-registry.service.js';
+import { TIER1_TOOLS, execTier1Tool } from '../services/tier1-tools.service.js';
+import { getDefaultTier3Model } from '../services/tier3.service.js';
 import { tryAcquireSessionLock } from '../config/database.js';
 import { loadMemoryState, summarizeEvicted, extractFacts } from '../services/session-memory.service.js';
-import { getFewShotExamples } from '../services/few-shot-library.js';
 import { config } from '../config/index.js';
 import { getRoleForSkill } from '../config/skill-role-map.js';
 import type { RoutingMetadataEvent } from '../types/inference.types.js';
 import { DEFAULT_MODEL } from '../types/inference.types.js';
 import type { RoutingInput, RoutingDecision } from '../types/routing.types.js';
-import { sequentialReasoner } from '../services/sequential-reasoning.service.js';
 import type { ContentBlock, DocumentContentBlock } from '../types/upload.types.js';
 import type { ConversationInferenceRequest, ConversationInferenceResult, BedrockMessage } from '../types/session.types.js';
+import { interceptUrls } from '../services/url-interceptor.service.js';
+import {
+  GoogleDriveNotAuthorizedError,
+  GoogleDriveTokenRevokedError,
+} from '../services/google-drive-token.service.js';
 
 /**
  * Inference routes — POST /api/v1/inference/generate
@@ -66,6 +73,31 @@ export const activeTurns = { clear() {} };
 const NOVA_LITE_MODEL = 'amazon.nova-lite-v1:0';
 function resolveModelForInvocation(modelId: string): string {
   return modelId;
+}
+
+/** Select the system-prompt grounding clause for the current execution path.
+ *  Internal turns (KB-grounded, or Tier-1 tool) anchor strictly to provided material.
+ *  A sovereign-tier-3 external escalation must NOT get that clause: it fires only when
+ *  retrieval is empty, so the internal doc-refusal text would make the external
+ *  general-knowledge model refuse live/open questions (e.g. "berapa kurs dollar saat ini"
+ *  answered "tidak tersedia dalam dokumen" instead of helping). External = general
+ *  assistant, honest about real-time data it cannot reach — a general fix, not query-specific. */
+export function buildGroundingClause(opts: { tier1ToolsOn: boolean; sovereignTier3: boolean }): string {
+  if (opts.tier1ToolsOn) {
+    return 'You have access to the search_internal_knowledge tool. Use it to search the internal ' +
+      'knowledge base (SOP/kebijakan/prosedur perbankan, FAQ, memo) whenever the provided context ' +
+      'is not enough to answer completely, or to follow a cross-reference. Call it BEFORE concluding ' +
+      'that information is unavailable. Base your final answer strictly on the retrieved material and ' +
+      'cite its source. For facts, numbers, and regulations, do not fabricate — state your uncertainty if unsure.';
+  }
+  if (opts.sovereignTier3) {
+    return 'No internal document was retrieved for this question — answer from your own general ' +
+      'knowledge, not as a document summarizer. For facts and figures, do not fabricate. If the question ' +
+      'needs real-time data (exchange rates, prices, weather, breaking events) that you cannot access ' +
+      'reliably, state that a live source is needed and name authoritative references (e.g. Bank Indonesia ' +
+      '/ JISDOR for IDR rates) instead of inventing a number.';
+  }
+  return 'If the user provides documents or data, base your answer strictly on that material. If asked about something not covered in the provided information, say "Informasi ini tidak tersedia dalam dokumen yang diberikan" instead of guessing. For facts, numbers, and regulations, do not fabricate — state your uncertainty if unsure.';
 }
 
 export const inferenceRouter = Router();
@@ -289,7 +321,7 @@ inferenceRouter.post('/batch',
         inputTokens: Math.ceil(maskedPrompt.length / 4), outputTokens: 0,
         status: 'failed', errorCategory: (error as Error).name === 'TimeoutError' ? 'timeout' : 'model_error',
         durationMs, routingState: 'manual', routingReasonCode: 'batch-inference',
-        reasoningSummary: 'Batch inference', executedModelId: validatedModelId,
+        executedModelId: validatedModelId,
         manualOverrideApplied: true,
         apiKeyId: req.apiKeyContext?.apiKeyId,
         applicationId: req.apiKeyContext?.applicationId, apiKeyUsed: true,
@@ -312,7 +344,7 @@ inferenceRouter.post('/batch',
           inputTokens: Math.ceil(maskedPrompt.length / 4), outputTokens: Math.ceil(resultText.length / 4),
           status: 'failed', errorCategory: 'pii_output_scan', durationMs,
           routingState: 'manual', routingReasonCode: 'batch-inference',
-          reasoningSummary: 'PII detected in model output — discarded', executedModelId: validatedModelId,
+          executedModelId: validatedModelId,
           manualOverrideApplied: true,
           apiKeyId: req.apiKeyContext?.apiKeyId,
           applicationId: req.apiKeyContext?.applicationId, apiKeyUsed: true,
@@ -357,7 +389,6 @@ inferenceRouter.post('/batch',
       durationMs,
       routingState: 'manual',
       routingReasonCode: 'batch-inference',
-      reasoningSummary: 'Batch inference',
       executedModelId: validatedModelId,
       manualOverrideApplied: true,
       apiKeyId: req.apiKeyContext?.apiKeyId,
@@ -440,11 +471,65 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  // 3. Mask the prompt with PII masker (fail-closed: reject if masking errors)
-  let maskedPrompt: string;
+  // 2b. URL Interceptor — detect Google Workspace URLs, fetch document content
+  // Must run BEFORE PII masking so doc text is masked atomically with prompt.
+  let extractedDocumentText: string | undefined;
+  let documentTitle: string | undefined;
+  let fileId: string | undefined;
+  let fileMimeType: string | undefined;
+  let effectivePrompt = prompt;
+
+  const driveFetchStartTime = Date.now();
+
   try {
-    const maskResult = mask(prompt);
-    maskedPrompt = maskResult.maskedText;
+    const urlResult = await interceptUrls(prompt, user.sub);
+    if (urlResult) {
+      effectivePrompt = urlResult.cleanedPrompt;
+      extractedDocumentText = urlResult.extractedDocumentText;
+      documentTitle = urlResult.documentTitle;
+      fileId = urlResult.fileId;
+      fileMimeType = urlResult.mimeType;
+    }
+  } catch (err: unknown) {
+    if (err instanceof GoogleDriveNotAuthorizedError) {
+      res.status(401).json({
+        error: 'GOOGLE_DRIVE_NOT_AUTHORIZED',
+        message: 'Google Drive access required. Please authorize.',
+      });
+      return;
+    }
+    if (err instanceof GoogleDriveTokenRevokedError) {
+      res.status(401).json({
+        error: 'GOOGLE_DRIVE_TOKEN_REVOKED',
+        message: 'Sesi Google berakhir, silakan izinkan ulang.',
+      });
+      return;
+    }
+    // Drive API errors during fetch — emit as SSE error later, but for now
+    // the fetch happens before SSE setup, so return JSON error
+    const driveErr = err as Error & { code?: string; statusCode?: number };
+    res.status(driveErr.statusCode ?? 500).json({
+      error: driveErr.code ?? 'GOOGLE_DRIVE_FETCH_ERROR',
+      message: driveErr.message || 'Gagal mengambil dokumen dari Google Drive',
+    });
+    return;
+  }
+
+  // 3. Mask the prompt (and document text if present) with PII masker (fail-closed)
+  let maskedPrompt: string;
+  let maskedDocumentText: string | undefined;
+  let piiDetected = false;          // Sovereignty gate: restricted data present
+  try {
+    // Mask prompt and document text separately (NOT combined-then-split — masker changes string length)
+    const promptMask = mask(effectivePrompt);
+    maskedPrompt = promptMask.maskedText;
+    piiDetected = promptMask.entityCount > 0;
+
+    if (extractedDocumentText) {
+      const docMask = mask(extractedDocumentText);
+      maskedDocumentText = docMask.maskedText;
+      if (docMask.entityCount > 0) piiDetected = true;
+    }
   } catch {
     res.status(500).json({
       error: 'MASKING_ERROR',
@@ -561,12 +646,11 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         refinedPrompt: maskedPrompt,
         routingReasonCode: 'passthrough',
         reasoningSummary: 'Passthrough mode — raw prompt, no routing',
-        modalityFlags: { textOnly: true, documentText: false, image: false, mixed: false },
+        modalityFlags: { textOnly: !extractedDocumentText, documentText: !!extractedDocumentText, image: false, mixed: false },
         manualOverrideApplied: false,
         passthrough: true,
         flags: ['passthrough'],
         skill: 'fallback',
-        contract: null,
         sessionContext: maskedPrompt.slice(0, 120), // first 120 chars as preview
       };
     } else if (routingState === 'auto') {
@@ -580,7 +664,9 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         imageModelRequired: false,
         routingState: 'auto',
         userId: user.sub,
+        piiDetected,
         conversationContext,
+        maskedDocumentText,
       };
 
       try {
@@ -590,12 +676,7 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         const routingDuration = Date.now() - routingStart;
         executedModelId = routingDecision.executedModelId;
         effectivePrompt = routingDecision.refinedPrompt;
-        // Attach raw LLM call data for debugging
-        (routingDecision as any)._classRaw = (routingDecision as any)._classRaw || (routingDecision as any).contract?._classRaw;
-        (routingDecision as any)._classPrompt = (routingDecision as any)._classPrompt || (routingDecision as any).contract?._classPrompt;
-        (routingDecision as any)._refineRaw = (routingDecision as any)._refineRaw || (routingDecision as any).contract?._refineRaw;
-        (routingDecision as any)._refinePrompt = (routingDecision as any)._refinePrompt || (routingDecision as any).contract?._refinePrompt;
-        console.log(`[inference] Routing complete in ${routingDuration}ms → model=${executedModelId}, score=${routingDecision.complexityScore}, band=${routingDecision.scoreBand}, flags=[${routingDecision.flags.join(',')}]`);
+        console.log(`[inference] Routing complete in ${routingDuration}ms → model=${executedModelId}, reason=${routingDecision.routingReasonCode}, flags=[${routingDecision.flags.join(',')}]`);
       } catch (routingError: unknown) {
         // Routing engine failure: fallback to DEFAULT_MODEL, log warning
         executedModelId = DEFAULT_MODEL;
@@ -609,12 +690,11 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
           refinedPrompt: maskedPrompt,
           routingReasonCode: 'routing-fallback',
           reasoningSummary: 'Routing engine failed, using default model',
-          modalityFlags: { textOnly: true, documentText: false, image: false, mixed: false },
+          modalityFlags: { textOnly: !extractedDocumentText, documentText: !!extractedDocumentText, image: false, mixed: false },
           manualOverrideApplied: false,
           flags: ['routing-fallback'],
           skill: 'fallback',
-          contract: null,
-        };
+          };
       }
     } else {
       // Manual state: use user-selected model
@@ -627,11 +707,10 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         refinedPrompt: maskedPrompt,
         routingReasonCode: 'manual-override',
         reasoningSummary: `Manual routing: user selected model ${validatedModelId}`,
-        modalityFlags: { textOnly: true, documentText: false, image: false, mixed: false },
+        modalityFlags: { textOnly: !extractedDocumentText, documentText: !!extractedDocumentText, image: false, mixed: false },
         manualOverrideApplied: true,
         flags: [],
         skill: 'fallback',
-        contract: null,
       };
     }
 
@@ -645,30 +724,22 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
     // 10b. Emit session SSE event with sessionId for frontend
     res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
 
-    // 10c. Emit routing metadata SSE event if enabled
-    if (config.routing.metadataEnabled && routingDecision) {
+    // 10c. Routing metadata SSE — emitted from the current (possibly post-finalize) decision.
+    // A Tier-3 candidate defers emission until after knowledge retrieval resolves the final tier,
+    // so the client/audit see the real execution model (external vs private Bedrock).
+    const isTier3Candidate = routingDecision?.flags?.includes('tier3-candidate') === true;
+    const writeRoutingEvent = (): void => {
+      if (!config.routing.metadataEnabled || !routingDecision) return;
       const routingMetadata: RoutingMetadataEvent = {
-        refinedPrompt: routingDecision.refinedPrompt,
-        complexityScore: routingDecision.complexityScore,
-        scoreBand: routingDecision.scoreBand,
         routingState: routingDecision.routingState,
         executedModelId: routingDecision.executedModelId,
         routingReasonCode: routingDecision.routingReasonCode,
-        reasoningSummary: routingDecision.reasoningSummary,
         modalityFlags: routingDecision.modalityFlags,
         manualOverrideApplied: routingDecision.manualOverrideApplied,
-        skill: routingDecision.skill,
-        contract: routingDecision.contract as Record<string, unknown> | null | undefined,
-
-        // Confidence & flags
-        confidence: routingDecision.confidence,
         flags: routingDecision.flags,
 
-        // Timing (ms per routing step)
+        // Routing decision timing (ms)
         routingDurationMs: routingDecision.routingDurationMs,
-        classificationDurationMs: routingDecision.classificationDurationMs,
-        refinementDurationMs: routingDecision.refinementDurationMs,
-        scoringDurationMs: routingDecision.scoringDurationMs,
 
         // Prompt info
         originalPromptLength: maskedPrompt.length,
@@ -683,20 +754,10 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         memorySummary: memoryState.summary ?? undefined,
         memoryVersion: memoryState.memoryVersion,
         memoryFacts: memoryState.facts,
-        // Raw LLM call data for debugging (routeRequest internals)
-        _classificationRaw: (routingDecision as any)?._classRaw,
-        _classificationPrompt: (routingDecision as any)?._classPrompt,
-        _refinementRaw: (routingDecision as any)?._refineRaw,
-        _refinementPrompt: (routingDecision as any)?._refinePrompt,
       };
       res.write(`event: routing\ndata: ${JSON.stringify(routingMetadata)}\n\n`);
-    }
-
-    // 11. Inject ambiguities into prompt if contract flagged them
-    if (routingDecision?.contract?.clarificationNeeded && routingDecision?.contract?.ambiguities?.length > 0) {
-      const ambigNote = '\n\nNote: The following aspects of my request may be unclear. Please address them if possible:\n- ' + routingDecision.contract.ambiguities.join('\n- ');
-      effectivePrompt += ambigNote;
-    }
+    };
+    if (!isTier3Candidate) writeRoutingEvent();
 
     // 11b. Build inference request using contextOutput.inference_payload
     const inferenceMessages: BedrockMessage[] = contextOutput.inference_payload.slice(0, -1);
@@ -704,17 +765,45 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
       role: 'user',
       content: [{ text: effectivePrompt }],
     };
-    // Inject skill-specific few-shot examples for format adherence (skip in passthrough)
-    let conversationMessages: BedrockMessage[];
-    if (isPassthrough) {
-      conversationMessages = [...inferenceMessages, currentUserMessage];
-    } else {
-      const fewShotPairs = getFewShotExamples(routingDecision?.skill || 'fallback');
-      conversationMessages = [...inferenceMessages, ...fewShotPairs, currentUserMessage];
+    const conversationMessages: BedrockMessage[] = [...inferenceMessages, currentUserMessage];
+
+    // Knowledge retrieval (Tier 2) — semantic search gated at KNOWLEDGE_MIN_SCORE, with
+    // self-timeout; degrades to [] on failure. Empty result on a candidate → Tier-3 below.
+    const knowledgeChunks = await knowledgeSearch(effectivePrompt, config.knowledge.topK);
+
+    // Tier-3 finalize: the sovereignty gate's knowledge half lives here, AFTER retrieval.
+    // A candidate escalates to the external model only when retrieval found nothing — internal
+    // knowledge text must never leave for an external provider. Restricted candidates are
+    // unreachable (classifier returned auto-tier-1 in routing). Emit the deferred routing event
+    // with the final tier before any delta stream starts.
+    if (routingDecision?.flags?.includes('tier3-candidate')) {
+      const tier3Model = await getDefaultTier3Model();
+      if (knowledgeChunks.length === 0 && tier3Model) {
+        executedModelId = tier3Model;
+        routingDecision = {
+          ...routingDecision,
+          executedModelId: tier3Model,
+          routingReasonCode: 'auto-tier-3',
+          flags: ['sovereign-tier-3'],
+        };
+        console.log(`[inference] Tier-3 escalation → external model=${tier3Model} (no internal knowledge)`);
+      } else {
+        routingDecision = {
+          ...routingDecision,
+          flags: routingDecision.flags.filter((f) => f !== 'tier3-candidate'),
+        };
+        console.log('[inference] Tier-3 candidate downgraded to private Bedrock (internal knowledge grounds answer)');
+      }
+      writeRoutingEvent();
     }
 
-    // Knowledge retrieval (Tier 2) — hybrid search with self-timeout; degrades to [] on failure.
-    const knowledgeChunks = await knowledgeSearch(effectivePrompt, config.knowledge.topK);
+    // Tier-1 internal tool-loop gate (default OFF — zero behavior change when disabled).
+    // Runs only on the private-Bedrock JSON-text path with an allowlisted model; never on
+    // sovereign-tier-3 escalation or the multipart/image path (separate handler).
+    const tier1ToolsOn =
+      !routingDecision?.flags?.includes('sovereign-tier-3') &&
+      config.routing.tier1Tools.enabled &&
+      executedModelId === (config.routing.tier1Tools.modelId || config.routing.autoModelId);
 
     // Cohere Embed v4 usage: the retrieval query is embedded once per turn (input tokens ≈ chars/4).
     const embeddingInputTokens = Math.ceil(effectivePrompt.length / 4);
@@ -736,20 +825,11 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
       modelId: resolveModelForInvocation(executedModelId),
       userId: user.sub,
       system: (() => {
-        const role = routingDecision?.contract?.role || getRoleForSkill(routingDecision?.skill || 'fallback');
-        const lang = routingDecision?.detectedLanguage || 'indonesian';
-        const bi = routingDecision?.contract?.behavioral_instructions;
-        const skill = routingDecision?.skill || 'fallback';
-        // Use deterministic template if available (preferred), fall back to legacy dynamic output_format
-        const formatTemplate = getDefaultFormatTemplate(skill) || routingDecision?.contract?.output_format;
+        const role = isPassthrough ? passthroughRole : getRoleForSkill('fallback');
+        const lang = 'indonesian';
 
         // Start with a clear instruction or role identity, then language
-        let s: string;
-        if (isPassthrough) {
-          s = 'You are ' + passthroughRole + '. Respond in ' + lang + '.';
-        } else {
-          s = 'You are ' + role + '. Respond in ' + lang + '.';
-        }
+        let s = 'You are ' + role + '. Respond in ' + lang + '.';
 
         // Markdown formatting instruction — explicit, works for both EN and ID
         const FORMAT_INSTRUCTION = [
@@ -762,22 +842,23 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
           '- Use > for quotes',
           '- Use |---| for tables',
         ].join('\n');
-
-        if (isPassthrough || !formatTemplate) {
-          s += '\n\n' + FORMAT_INSTRUCTION;
-        } else {
-          s += '\n\nFollow this output structure:\n' + formatTemplate;
-        }
-
-        // Append behavioral instructions if present
-        if (bi) s += '\n\n' + bi;
+        s += '\n\n' + FORMAT_INSTRUCTION;
 
         // Knowledge Layer: inject retrieved reference documents + citation rule.
         const knowledgeSection = buildKnowledgeSection(knowledgeChunks);
         if (knowledgeSection) s += '\n\n' + knowledgeSection;
 
-        // Grounding: prevent hallucination by anchoring to provided context
-        s += '\n\nIf the user provides documents or data, base your answer strictly on that material. If asked about something not covered in the provided information, say "Informasi ini tidak tersedia dalam dokumen yang diberikan" instead of guessing. For facts, numbers, and regulations, do not fabricate — state your uncertainty if unsure.';
+        // Google Workspace document: inject fetched document content as context.
+        if (extractedDocumentText) {
+          s += '\n\n[Dokumen Google Drive: ' + (documentTitle || 'Dokumen') + ']\n' + extractedDocumentText.slice(0, 50000);
+        }
+
+        // Grounding: prevent hallucination by anchoring to provided context — clause chosen
+        // per execution path (Tier-1 tool / sovereign-tier-3 external / internal doc).
+        s += '\n\n' + buildGroundingClause({
+          tier1ToolsOn,
+          sovereignTier3: routingDecision?.flags?.includes('sovereign-tier-3') === true,
+        });
 
         return s;
       })(),
@@ -790,120 +871,36 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
       }),
     };
 
-    let orchestrationMeta: any;
-
     try {
-      console.log(`[inference] Calling generate() with model=${resolveModelForInvocation(executedModelId)}, prompt length=${effectivePrompt.length}, history messages=${contextOutput.historyMessageCount}`);
+      console.log(`[inference] Calling ${routingDecision?.flags?.includes('sovereign-tier-3') ? 'external' : 'generate()'} with model=${resolveModelForInvocation(executedModelId)}, prompt length=${effectivePrompt.length}, history messages=${contextOutput.historyMessageCount}`);
 
       // ── Execution Branch ─────────────────────────────────────────
-      let result: ConversationInferenceResult;
-
-      // Unified dispatch: sequential reasoning for complex queries (≥4), single-shot otherwise
-      // Skip sequential reasoning in passthrough mode
-      if ((routingDecision?.complexityScore ?? 0) >= 4 && routingDecision?.routingState !== 'manual' && !isPassthrough) {
-        const seqInput = {
-          originalPrompt: maskedPrompt,
-          refinedPrompt: effectivePrompt,
-          maskedDocumentText: undefined,
-          conversationHistory: inferenceMessages,
-          userId: user.sub,
-          sessionId,
-          username: user.username,
-          routingDecision,
-        };
-        console.log(`[inference] Sequential reasoning triggered: complexity=${routingDecision.complexityScore}, calling SequentialReasoner`);
-        const seqResult = await sequentialReasoner.execute(seqInput, res);
-
-        if (seqResult) {
-          console.log(`[inference] Sequential reasoning complete: ${seqResult.assistantText.length} chars, ${seqResult.stepResults.filter(r => r.status === 'success').length}/${seqResult.stepResults.length} steps`);
-          orchestrationMeta = seqResult.orchestrationMeta as any;
-          result = {
-            assistantText: seqResult.assistantText,
-            inputTokens: seqResult.orchestrationMeta.totalInputTokens,
-            outputTokens: seqResult.orchestrationMeta.totalOutputTokens,
-            modelId: executedModelId,
-            status: 'success',
-          };
-        } else {
-          console.log('[inference] Sequential reasoning plan failed, falling back to single-shot generate()');
-          result = await generate(conversationRequest, res) as ConversationInferenceResult;
-        }
-      } else {
-        result = await generate(conversationRequest, res) as ConversationInferenceResult;
-      }
-
-      // Done is emitted below after verifier + semantic repair.
-      // generate() already emitted done internally. This ensures repair results
-      // arrive BEFORE done on the frontend so they can be processed.
-
-      // 12. Run verifier if we have a contract (skip in passthrough)
-      if (!isPassthrough && routingDecision?.contract && result.assistantText) {
-        try {
-          const verification = verifyOutput(routingDecision.contract, result.assistantText);
-          res.write(`event: verification\ndata: ${JSON.stringify(verification)}\n\n`);
-          console.log(`[verification] ${verification.passed ? 'PASSED' : 'FAILED'} — ${verification.violations.length} violations`);
-
-          // Auto-repair: if verification failed, fix violated parts (fire-and-forget style)
-          if (!verification.passed && verification.violations.filter(v => v.severity === 'error').length > 0) {
-            const repairMessages = conversationMessages.map(msg => ({
-              role: msg.role as 'user' | 'assistant',
-              content: msg.content,
-            }));
-            repairResponse(
-              executedModelId,
-              repairMessages,
-              verification.violations,
-            ).then(repairText => {
-              if (repairText) {
-                const sanitizedRepair = mask(repairText).maskedText;
-                res.write(`event: repair\ndata: ${JSON.stringify({ text: sanitizedRepair })}\n\n`);
-                console.log(`[repair] Auto-repair generated: ${sanitizedRepair.length} chars`);
-              }
-            }).catch(() => { /* fire-and-forget */ });
-          }
-
-          // Semantic verification (LLM-as-a-judge) for high-stakes skills
-          const semanticVerdict = await semanticJudge(
-            maskedPrompt,
-            result.assistantText,
-            routingDecision?.skill || 'fallback',
-          );
-          if (semanticVerdict && !semanticVerdict.is_correct && semanticVerdict.missing_elements.length > 0) {
-            res.write(`event: semantic_verdict\ndata: ${JSON.stringify(semanticVerdict)}\n\n`);
-            console.log(`[semantic-judge] FAILED — ${semanticVerdict.missing_elements.length} missing elements`);
-
-            // Feed into repair pipeline
-            const semRepairMessages = conversationMessages.map(msg => ({
-              role: msg.role as 'user' | 'assistant',
-              content: msg.content,
-            }));
-            repairResponse(
-              executedModelId,
-              semRepairMessages,
-              semanticVerdict.missing_elements.map(m => ({
-                field: 'semantic', issue: m, severity: 'error' as const,
-              })),
-            ).then(repairText => {
-              if (repairText) {
-                const sanitizedRepair = mask(repairText).maskedText;
-                res.write(`event: repair\ndata: ${JSON.stringify({ text: sanitizedRepair })}\n\n`);
-                console.log(`[repair] Semantic repair generated: ${sanitizedRepair.length} chars`);
-              }
-            }).catch(() => { /* fire-and-forget */ });
-          } else if (semanticVerdict?.is_correct) {
-            console.log('[semantic-judge] PASSED');
-          }
-        } catch (verifyErr: unknown) {
-          console.warn('[verification] Verifier error:', (verifyErr as Error).message);
-        }
-      }
-
-      // Emit done event after verifier + semantic repair so repair results
-      // arrive BEFORE done on the frontend. generate() already emitted done
-      // internally — sequential reasoning path bypassed it and needs it here.
-      if (!isPassthrough && (routingDecision?.complexityScore ?? 0) >= 4 && routingDecision?.routingState !== 'manual') {
-        res.write('event: done\ndata: {}\n\n');
-      }
+      // Sequential reasoning removed (Tahap 1, Req 1.2) — single-shot only.
+      // Tier-3 decision → OpenAI-compatible external stream (delta/metadata/done parity).
+      // Else → Bedrock generate(); generate() emits the `done` event internally.
+      const isTier3External = routingDecision?.flags?.includes('sovereign-tier-3') === true;
+      const tier3ModelId = resolveModelForInvocation(executedModelId);
+      const t3Capable = config.routing.externalTier3.toolModelPrefixes.some(
+        (p) => p && tier3ModelId.startsWith(p),
+      );
+      const tier3Tools = isTier3External && t3Capable ? AVAILABLE_TOOLS : undefined;
+      const tier3Thinking = isTier3External && t3Capable ? config.routing.externalTier3.thinkingParams : undefined;
+      const result = isTier3External
+        ? await streamExternalCompletion(
+            conversationRequest,
+            config.routing.externalTier3.baseUrl,
+            config.routing.externalTier3.apiKey,
+            res,
+            tier3Tools,
+            tier3Thinking,
+          )
+        : tier1ToolsOn
+          ? await generate(conversationRequest, res, {
+              tools: TIER1_TOOLS,
+              execTool: execTier1Tool,
+              maxIterations: config.routing.tier1Tools.maxIterations,
+            }) as ConversationInferenceResult
+          : await generate(conversationRequest, res) as ConversationInferenceResult;
 
       // 13. After streaming: store assistant message
       if (result.assistantText) {
@@ -941,9 +938,7 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         durationMs,
         passthrough: isPassthrough || undefined,
         routingState: routingDecision?.routingState,
-        complexityScore: routingDecision?.complexityScore,
         routingReasonCode: routingDecision?.routingReasonCode,
-        reasoningSummary: routingDecision?.reasoningSummary,
         executedModelId: routingDecision?.executedModelId,
         manualOverrideApplied: routingDecision?.manualOverrideApplied,
         routingFlags: routingDecision?.flags,
@@ -951,12 +946,18 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         replayedMessageCount: contextOutput.historyMessageCount,
         contextTruncated: contextOutput.truncated,
         contextSummarized: false,
-        orchestrationMeta,
-        routingContext: routingDecision?.contract?.context,
-        routingIntent: routingDecision?.contract?.intent,
         sessionContext: routingDecision?.sessionContext,
         knowledgeSourceIds: knowledgeChunks.map((c) => c.id),
         embeddingInputTokens,
+        toolCallsMeta: result.toolCallsMeta,
+        orchestrationMeta: fileId ? {
+          action: 'gdrive_fetch',
+          fileId,
+          fileName: documentTitle,
+          mimeType: fileMimeType,
+          durationMs: Date.now() - driveFetchStartTime,
+          success: true,
+        } : undefined,
       }).catch(() => { /* fire-and-forget */ });
 
       // 14. Memory update if messages were evicted (fire-and-forget)
@@ -997,9 +998,7 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         errorCategory,
         durationMs,
         routingState: routingDecision?.routingState,
-        complexityScore: routingDecision?.complexityScore,
         routingReasonCode: routingDecision?.routingReasonCode,
-        reasoningSummary: routingDecision?.reasoningSummary,
         executedModelId: routingDecision?.executedModelId,
         manualOverrideApplied: routingDecision?.manualOverrideApplied,
         routingFlags: routingDecision?.flags,
@@ -1007,10 +1006,15 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         replayedMessageCount: contextOutput.historyMessageCount,
         contextTruncated: contextOutput.truncated,
         contextSummarized: false,
-        orchestrationMeta,
-        routingContext: routingDecision?.contract?.context,
-        routingIntent: routingDecision?.contract?.intent,
         sessionContext: routingDecision?.sessionContext,
+        orchestrationMeta: fileId ? {
+          action: 'gdrive_fetch',
+          fileId,
+          fileName: documentTitle,
+          mimeType: fileMimeType,
+          durationMs: Date.now() - driveFetchStartTime,
+          success: true,
+        } : undefined,
       }).catch(() => { /* fire-and-forget */ });
     }
   } finally {
@@ -1157,9 +1161,11 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
     : 'Analyze the attached content.';
 
   let maskedPrompt: string;
+  let piiDetected = false;          // Sovereignty gate: PII in prompt OR any document text
   try {
     const maskResult = mask(effectivePrompt);
     maskedPrompt = maskResult.maskedText;
+    piiDetected = maskResult.entityCount > 0;
   } catch {
     res.status(500).json({
       error: 'MASKING_ERROR',
@@ -1174,6 +1180,7 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
     for (const doc of documentExtractions) {
       if (doc.text) {
         const maskResult = mask(doc.text);
+        if (maskResult.entityCount > 0) piiDetected = true;
         maskedDocumentExtractions.push({
           text: maskResult.maskedText,
           filename: doc.filename,
@@ -1293,6 +1300,7 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
       imageModelRequired: images.length > 0,
       routingState: 'auto',
       userId: user.sub,
+      piiDetected,
       conversationContext,
     };
 
@@ -1322,7 +1330,6 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
         manualOverrideApplied: false,
         flags: ['routing-fallback'],
         skill: 'fallback',
-        contract: null,
       };
     }
   } else {
@@ -1345,7 +1352,6 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
       manualOverrideApplied: true,
       flags: [],
       skill: 'fallback',
-      contract: null,
     };
   }
 
@@ -1401,12 +1407,6 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
 
   let ocrText: string | undefined;
   let finalExecutedModelId = executedModelId;
-
-  // Inject ambiguities into prompt if contract flagged them (multipart)
-  if (routingDecision?.contract?.clarificationNeeded && routingDecision?.contract?.ambiguities?.length > 0) {
-    const ambigNote = '\n\nNote: The following aspects of my request may be unclear. Please address them if possible:\n- ' + routingDecision.contract.ambiguities.join('\n- ');
-    routingEffectivePrompt += ambigNote;
-  }
 
   // Use inference_payload from buildContext() for history, exclude the last message
   const inferenceMessages: BedrockMessage[] = contextOutput.inference_payload.slice(0, -1);
@@ -1478,14 +1478,6 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
     }
   }
 
-  // Use OCR-extracted text as effective document content when available.
-  // The document extractor may return empty for image-heavy files (PPTX, scanned PDFs)
-  // while the OCR pipeline extracts the real content. Without this override, the
-  // orchestrator (sub-agent or sequential reasoning) receives empty context.
-  const effectiveDocText = ocrText && ocrText.trim().length > 0
-    ? ocrText.slice(0, config.orchestration.largeDocumentThreshold)
-    : (maskedDocTextCombined || undefined);
-
   // Step 14: Set SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -1499,29 +1491,15 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
   // Step 14c: Emit routing metadata SSE event if enabled
   if (config.routing.metadataEnabled && routingDecision) {
     const routingMetadata: RoutingMetadataEvent = {
-      refinedPrompt: routingDecision.refinedPrompt,
-      complexityScore: routingDecision.complexityScore,
-      scoreBand: routingDecision.scoreBand,
       routingState: routingDecision.routingState,
       executedModelId: finalExecutedModelId,
       routingReasonCode: needsOCR ? 'ocr-two-stage' : routingDecision.routingReasonCode,
-      reasoningSummary: needsOCR
-        ? `Two-stage OCR: ${NOVA_LITE_MODEL} extracted content, ${ENHANCE_MODEL} enhanced response`
-        : routingDecision.reasoningSummary,
       modalityFlags: routingDecision.modalityFlags,
       manualOverrideApplied: routingDecision.manualOverrideApplied,
-      skill: routingDecision.skill,
-      contract: routingDecision.contract as Record<string, unknown> | null | undefined,
-
-      // Confidence & flags
-      confidence: routingDecision.confidence,
       flags: routingDecision.flags,
 
-      // Timing (ms per routing step)
+      // Routing decision timing (ms)
       routingDurationMs: routingDecision.routingDurationMs,
-      classificationDurationMs: routingDecision.classificationDurationMs,
-      refinementDurationMs: routingDecision.refinementDurationMs,
-      scoringDurationMs: routingDecision.scoringDurationMs,
 
       // Prompt info
       originalPromptLength: maskedPrompt.length,
@@ -1541,63 +1519,19 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
       ocrExecuted: needsOCR || undefined,
       ocrModel: needsOCR ? NOVA_LITE_MODEL : undefined,
       enhanceModel: needsOCR ? ENHANCE_MODEL : undefined,
-      // Raw LLM call data for debugging
-      _classificationRaw: (routingDecision as any)?._classRaw,
-      _classificationPrompt: (routingDecision as any)?._classPrompt,
-      _refinementRaw: (routingDecision as any)?._refineRaw,
-      _refinementPrompt: (routingDecision as any)?._refinePrompt,
     };
     res.write(`event: routing\ndata: ${JSON.stringify(routingMetadata)}\n\n`);
-  }
-
-  // Inject skill-specific few-shot examples for format adherence
-  const fewShotPairsMP = getFewShotExamples(routingDecision?.skill || 'fallback');
-  if (fewShotPairsMP.length > 0) {
-    // Insert before the current user message, after history + OCR output
-    const lastMsg = conversationMessages.pop()!;
-    conversationMessages.push(...fewShotPairsMP, lastMsg);
   }
 
   // Step 15: Call generate (streams enhance model or original model)
   // If OCR switched to enhance model, fall back to original routing model on failure
   let result: ConversationInferenceResult | undefined;
-  let orchestrationMeta: any;
   const targetModel = resolveModelForInvocation(finalExecutedModelId);
   const fallbackModel = executedModelId !== finalExecutedModelId ? resolveModelForInvocation(executedModelId) : null;
 
   try {  // middle try — wraps generate, verifier, storage, audit; catch is main error handler below
 
-  // ── Unified Execution Branch ───────────────────────────────────
-  // Sequential reasoning for complex queries (≥4), single-shot otherwise
-  if (!result && (routingDecision?.complexityScore ?? 0) >= 4 && routingDecision?.routingState !== 'manual') {
-    const seqInput = {
-      originalPrompt: maskedPrompt,
-      refinedPrompt: routingEffectivePrompt,
-      maskedDocumentText: effectiveDocText,
-      conversationHistory: inferenceMessages,
-      userId: user.sub,
-      sessionId,
-      username: user.username,
-      routingDecision,
-    };
-    console.log(`[inference-multipart] Sequential reasoning triggered: complexity=${routingDecision.complexityScore}, calling SequentialReasoner`);
-    const seqResult = await sequentialReasoner.execute(seqInput, res);
-
-    if (seqResult) {
-      console.log(`[inference-multipart] Sequential reasoning complete: ${seqResult.assistantText.length} chars, ${seqResult.stepResults.filter(r => r.status === 'success').length}/${seqResult.stepResults.length} steps`);
-      orchestrationMeta = seqResult.orchestrationMeta as any;
-      result = {
-        assistantText: seqResult.assistantText,
-        inputTokens: seqResult.orchestrationMeta.totalInputTokens,
-        outputTokens: seqResult.orchestrationMeta.totalOutputTokens,
-        modelId: finalExecutedModelId,
-        status: 'success',
-      };
-    } else {
-      console.log('[inference-multipart] Sequential reasoning plan failed, falling back to standard generate');
-    }
-  }
-
+  // Sequential reasoning removed (Tahap 1, Req 1.2) — single-shot generate() below.
   if (!result) {
     try {
       const conversationRequest: ConversationInferenceRequest = {
@@ -1605,17 +1539,22 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
         modelId: targetModel,
         userId: user.sub,
         system: (() => {
-        const role = routingDecision?.contract?.role || getRoleForSkill(routingDecision?.skill || 'fallback');
-        const lang = routingDecision?.detectedLanguage || 'indonesian';
-        const bi = routingDecision?.contract?.behavioral_instructions;
-        const skill = routingDecision?.skill || 'fallback';
-        // Use deterministic template if available (preferred), fall back to legacy dynamic output_format
-        const formatTemplate = getDefaultFormatTemplate(skill) || routingDecision?.contract?.output_format;
+        const role = getRoleForSkill('fallback');
+        const lang = 'indonesian';
         let s = 'You are ' + role + '. Respond in ' + lang + '.';
-        if (bi) s += '\n\n' + bi;
-        if (formatTemplate) {
-          s += '\n\nFollow this output structure:\n' + formatTemplate;
-        }
+
+        // Markdown formatting instruction — explicit, works for both EN and ID
+        const FORMAT_INSTRUCTION = [
+          'IMPORTANT FORMAT RULES:',
+          '- Use ## and ### for section headings (not just bold or emoji)',
+          '- Use - for bullet lists',
+          '- Use 1. for numbered lists',
+          '- Use ``` for code blocks with language label',
+          '- Use **bold** for emphasis, *italic* for secondary',
+          '- Use > for quotes',
+          '- Use |---| for tables',
+        ].join('\n');
+        s += '\n\n' + FORMAT_INSTRUCTION;
         // Grounding: prevent hallucination by anchoring to provided context
         s += '\n\nIf the user provides documents or data, base your answer strictly on that material. If asked about something not covered in the provided information, say "Informasi ini tidak tersedia dalam dokumen yang diberikan" instead of guessing. For facts, numbers, and regulations, do not fabricate — state your uncertainty if unsure.';
         return s;
@@ -1652,71 +1591,6 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
       }
     }
   }
-
-  // Verifier + auto-repair for multipath handler
-  if (routingDecision?.contract && result.assistantText) {
-      try {
-        const verification = verifyOutput(routingDecision.contract, result.assistantText);
-        res.write(`event: verification\ndata: ${JSON.stringify(verification)}\n\n`);
-        console.log(`[verification] ${verification.passed ? 'PASSED' : 'FAILED'} — ${verification.violations.length} violations`);
-
-        if (!verification.passed && verification.violations.filter(v => v.severity === 'error').length > 0) {
-          const repairMessages = conversationMessages.map(msg => ({
-            role: msg.role as 'user' | 'assistant',
-            content: msg.content,
-          }));
-          repairResponse(
-            finalExecutedModelId,
-            repairMessages,
-            verification.violations,
-          ).then(repairText => {
-            if (repairText) {
-              const sanitizedRepair = mask(repairText).maskedText;
-              res.write(`event: repair\ndata: ${JSON.stringify({ text: sanitizedRepair })}\n\n`);
-              console.log(`[repair] Auto-repair generated: ${sanitizedRepair.length} chars`);
-            }
-          }).catch(() => { /* fire-and-forget */ });
-        }
-
-        // Semantic verification (LLM-as-a-judge) for high-stakes skills
-        const semanticVerdict = await semanticJudge(
-          maskedPrompt,
-          result.assistantText,
-          routingDecision?.skill || 'fallback',
-        );
-        if (semanticVerdict && !semanticVerdict.is_correct && semanticVerdict.missing_elements.length > 0) {
-          res.write(`event: semantic_verdict\ndata: ${JSON.stringify(semanticVerdict)}\n\n`);
-          console.log(`[semantic-judge] FAILED — ${semanticVerdict.missing_elements.length} missing elements`);
-
-          const semRepairMessages = conversationMessages.map(msg => ({
-            role: msg.role as 'user' | 'assistant',
-            content: msg.content,
-          }));
-          repairResponse(
-            finalExecutedModelId,
-            semRepairMessages,
-            semanticVerdict.missing_elements.map(m => ({
-              field: 'semantic', issue: m, severity: 'error' as const,
-            })),
-          ).then(repairText => {
-            if (repairText) {
-              const sanitizedRepair = mask(repairText).maskedText;
-              res.write(`event: repair\ndata: ${JSON.stringify({ text: sanitizedRepair })}\n\n`);
-              console.log(`[repair] Semantic repair generated: ${sanitizedRepair.length} chars`);
-            }
-          }).catch(() => { /* fire-and-forget */ });
-        } else if (semanticVerdict?.is_correct) {
-          console.log('[semantic-judge] PASSED');
-        }
-      } catch (verifyErr: unknown) {
-        console.warn('[verification] Verifier error:', (verifyErr as Error).message);
-      }
-    }
-
-    // Emit done after verifier + repair so repair events arrive before done
-    if ((routingDecision?.complexityScore ?? 0) >= 4 && routingDecision?.routingState !== 'manual') {
-      res.write('event: done\ndata: {}\n\n');
-    }
 
     // Step 16: After streaming: store assistant message
     if (result.assistantText) {
@@ -1759,9 +1633,7 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
       isMultimodal: true,
       // Routing metadata
       routingState: routingDecision?.routingState,
-      complexityScore: routingDecision?.complexityScore,
       routingReasonCode: needsOCR ? 'ocr-two-stage' : routingDecision?.routingReasonCode,
-      reasoningSummary: routingDecision?.reasoningSummary,
       executedModelId: routingDecision?.executedModelId,
       manualOverrideApplied: routingDecision?.manualOverrideApplied,
       routingFlags: routingDecision?.flags,
@@ -1770,9 +1642,6 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
       replayedMessageCount: contextOutput.historyMessageCount,
       contextTruncated: contextOutput.truncated,
       contextSummarized: false,
-      orchestrationMeta,
-      routingContext: routingDecision?.contract?.context,
-      routingIntent: routingDecision?.contract?.intent,
     }).catch(() => { /* fire-and-forget */ });
 
     // Memory update if messages were evicted (fire-and-forget)
@@ -1816,9 +1685,7 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
       isMultimodal: true,
       // Routing metadata
       routingState: routingDecision?.routingState,
-      complexityScore: routingDecision?.complexityScore,
       routingReasonCode: needsOCR ? 'ocr-two-stage' : routingDecision?.routingReasonCode,
-      reasoningSummary: routingDecision?.reasoningSummary,
       executedModelId: routingDecision?.executedModelId,
       manualOverrideApplied: routingDecision?.manualOverrideApplied,
       routingFlags: routingDecision?.flags,
@@ -1827,9 +1694,6 @@ async function handleMultipartInference(req: Request, res: Response, next: NextF
       replayedMessageCount: contextOutput.historyMessageCount,
       contextTruncated: contextOutput.truncated,
       contextSummarized: false,
-      orchestrationMeta,
-      routingContext: routingDecision?.contract?.context,
-      routingIntent: routingDecision?.contract?.intent,
     }).catch(() => { /* fire-and-forget */ });
   } finally {
     // Memory cleanup: release file buffers

@@ -3,7 +3,9 @@ import {
   ConverseCommand,
   ConverseStreamCommand,
   InvokeModelCommand,
+  type ContentBlock,
   type Message,
+  type Tool,
 } from '@aws-sdk/client-bedrock-runtime';
 import type { Response } from 'express';
 import { config } from '../config/index.js';
@@ -19,6 +21,8 @@ import type {
 } from '../types/session.types.js';
 import { getModelMaxOutputTokens } from '../config/model-capabilities.js';
 import { query } from '../config/database.js';
+import { mask } from './pii-masker.service.js';
+import type { ToolCallAuditMeta } from '../types/audit.types.js';
 
 /**
  * Inference service — model validation, Bedrock API invocation, and SSE streaming.
@@ -214,8 +218,10 @@ export async function validateModelId(modelId?: string, userId?: string): Promis
  * Check if a user has access to a model.
  * If the model has no access rows at all, it's public — everyone can use it.
  * If the model has access rows, the user must be in the whitelist.
+ * Exported for the routing seam (selectAutoModel) — auto must degrade silently
+ * on access denial, whereas validateModelId throws 403 for manual.
  */
-async function checkModelAccess(userId: string, modelId: string): Promise<boolean> {
+export async function checkModelAccess(userId: string, modelId: string): Promise<boolean> {
   try {
     // Check if model has any access rows (= private model)
     const { rows } = await query<{ exists: boolean }>(
@@ -245,6 +251,22 @@ function isConversationRequest(
   return 'messages' in request && Array.isArray((request as ConversationInferenceRequest).messages);
 }
 
+/** One native Bedrock `toolConfig.tools[]` entry (SDK type). */
+export type BedrockToolSpec = Tool;
+
+/**
+ * Optional tool-loop mode for generate(). When provided, generate() runs a bounded
+ * ReAct loop over Bedrock ConverseStream instead of the single-shot path. Absent →
+ * today's byte-identical single-shot stream. @see docs/features/tier1-tools/
+ */
+export interface Tier1ToolLoopOptions {
+  tools: Tool[];
+  /** Executes a tool locally. Must never throw raw errors upward (returns safe text). */
+  execTool: (name: string, args: unknown) => Promise<string>;
+  /** Max tool-capable rounds; a final plain round follows (cap) — external-chat mirror. */
+  maxIterations: number;
+}
+
 /**
  * Send an inference request to AWS Bedrock via ConverseStream and
  * stream the response back to the client as Server-Sent Events.
@@ -260,6 +282,8 @@ function isConversationRequest(
  *
  * @param request - The inference request (single prompt or conversation messages)
  * @param res - Express Response object to write SSE events to
+ * @param toolLoop - Optional bounded ReAct loop (tier1-tools). When absent this
+ *   function is byte-identical to the pre-feature single-shot stream.
  * @returns InferenceResult or ConversationInferenceResult with assistantText
  *
  * @see Requirements 3.1, 2.7
@@ -267,7 +291,9 @@ function isConversationRequest(
 export async function generate(
   request: InferenceRequest | ConversationInferenceRequest,
   res: Response,
+  toolLoop?: Tier1ToolLoopOptions,
 ): Promise<InferenceResult | ConversationInferenceResult> {
+  if (toolLoop) return runToolLoop(request, res, toolLoop);
   let messages: Message[];
 
   if (isConversationRequest(request)) {
@@ -381,6 +407,203 @@ export async function generate(
   };
 }
 
+/** ContentBlock emitted by one assistant round, in stream order (text can precede toolUse). */
+interface RoundBlock {
+  kind: 'text' | 'tool';
+  text?: string;
+  toolUseId?: string;
+  toolName?: string;
+  toolInput?: string;
+}
+
+/** Bedrock requires toolUse.input to be a JSON object — coerce, never a bare string. */
+function toInputObject(raw: string): Record<string, unknown> {
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Bounded ReAct loop over Bedrock ConverseStream (tier1-tools). Live-streams text
+ * deltas; intercepts toolUse by contentBlockIndex; runs ≤ maxIterations tool rounds,
+ * then a final plain round. Emits ONE summed `metadata` + `done` at the end and
+ * returns accumulated assistantText (matches exactly what the client saw).
+ * @see docs/features/tier1-tools/design.md
+ */
+async function runToolLoop(
+  request: InferenceRequest | ConversationInferenceRequest,
+  res: Response,
+  toolLoop: Tier1ToolLoopOptions,
+): Promise<InferenceResult | ConversationInferenceResult> {
+  const { tools, execTool, maxIterations } = toolLoop;
+
+  // ── Build working history (mirrors the single-shot builder) ─────────
+  let history: Message[];
+  if (isConversationRequest(request)) {
+    history = request.messages.map((msg) => ({
+      role: msg.role as Message['role'],
+      content: msg.content,
+    }));
+  } else {
+    let content: any[];
+    if (request.contentBlocks && request.contentBlocks.length > 0) {
+      content = request.contentBlocks.map((block) => {
+        if ('text' in block) return { text: (block as { text: string }).text };
+        if ('image' in block) return { image: (block as { image: unknown }).image };
+        return { document: (block as { document: unknown }).document };
+      });
+    } else {
+      content = [{ text: request.maskedPrompt }];
+    }
+    history = [{ role: 'user' as Message['role'], content }];
+  }
+
+  const inferenceConfig = {
+    maxTokens: request.inferenceConfig?.maxTokens ?? getModelMaxOutputTokens(request.modelId),
+    ...(request.inferenceConfig?.temperature !== undefined && { temperature: request.inferenceConfig.temperature }),
+    ...(request.inferenceConfig?.topP !== undefined && { topP: request.inferenceConfig.topP }),
+  };
+  const system = isConversationRequest(request) && request.system
+    ? [{ text: request.system }]
+    : undefined;
+
+  // Dynamic first-token timeout, same rule as the single-shot path.
+  const estimatedInputTokens = Math.ceil(
+    history.reduce((sum, msg) => {
+      const texts = (msg.content || []).filter((c) => c && typeof c === 'object' && 'text' in c).map((c) => (c as { text: string }).text);
+      return sum + texts.join('').length;
+    }, 0) / 4,
+  );
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let assistantText = '';
+  const toolCallsMeta: ToolCallAuditMeta[] = [];
+
+  for (let round = 0; round <= maxIterations; round++) {
+    const hasTools = round < maxIterations; // last round forces a plain answer
+    const command = new ConverseStreamCommand({
+      modelId: request.modelId,
+      messages: history,
+      ...(system ? { system } : {}),
+      inferenceConfig,
+      ...(hasTools ? { toolConfig: { tools } } : {}),
+    });
+
+    const controller = new AbortController();
+    const connectionTimeoutMs = Math.min(Math.max(estimatedInputTokens * 2, 30_000), 180_000);
+    const inferenceTimeout = setTimeout(() => controller.abort(), connectionTimeoutMs);
+
+    let response;
+    try {
+      response = await bedrockClient.send(command, { abortSignal: controller.signal });
+    } catch (err: unknown) {
+      clearTimeout(inferenceTimeout);
+      throw err;
+    }
+    clearTimeout(inferenceTimeout);
+
+    // ── Stream one round, tracking blocks in order ────────────────────
+    const blocks: RoundBlock[] = [];
+    const textByIndex = new Map<number, number>(); // blockIndex → last text block slot
+    const toolByIndex = new Map<number, number>(); // blockIndex → tool block slot
+    const lastText = () => blocks[blocks.length - 1];
+
+    for await (const event of response.stream ?? []) {
+      if (event.contentBlockStart) {
+        const idx = event.contentBlockStart.contentBlockIndex as number;
+        const ts = event.contentBlockStart.start?.toolUse;
+        if (ts) {
+          toolByIndex.set(idx, blocks.length);
+          blocks.push({ kind: 'tool', toolUseId: ts.toolUseId, toolName: ts.name, toolInput: '' });
+        }
+        // text blocks stream without contentBlockStart (Bedrock) — nothing to record.
+      } else if (event.contentBlockDelta) {
+        const idx = event.contentBlockDelta.contentBlockIndex as number;
+        const d = event.contentBlockDelta.delta;
+        if (d?.text) {
+          // text block may not have a recorded start — coalesce into the last text block
+          const slot = textByIndex.get(idx) ?? (lastText()?.kind === 'text' ? blocks.length - 1 : -1);
+          if (slot === -1) {
+            textByIndex.set(idx, blocks.length);
+            blocks.push({ kind: 'text', text: d.text });
+          } else {
+            (blocks[slot] as { text: string }).text += d.text;
+          }
+          assistantText += d.text;
+          res.write(`event: delta\ndata: ${JSON.stringify({ type: 'text', content: d.text })}\n\n`);
+        } else if (d?.toolUse?.input) {
+          const slot = toolByIndex.get(idx);
+          if (slot !== undefined) (blocks[slot] as { toolInput: string }).toolInput += String(d.toolUse.input);
+        }
+      } else if (event.metadata) {
+        inputTokens += event.metadata.usage?.inputTokens ?? 0;
+        outputTokens += event.metadata.usage?.outputTokens ?? 0;
+      } else if (event.messageStop) {
+        // per-round stop captured implicitly by loop end; single final done emitted below
+      }
+    }
+
+    const toolBlocks = blocks.filter((b) => b.kind === 'tool');
+    if (toolBlocks.length === 0 || !hasTools) break; // plain round or cap → final
+
+    // ── Tool round: report, execute, append, continue ─────────────────
+    res.write(`event: tool_call\ndata: ${JSON.stringify({ tools: toolBlocks.map((b) => b.toolName) })}\n\n`);
+
+    history.push({
+      role: 'assistant',
+      content: blocks.map((b) =>
+        b.kind === 'text'
+          ? { text: b.text ?? '' }
+          : { toolUse: { toolUseId: b.toolUseId, name: b.toolName, input: toInputObject(b.toolInput ?? '') } },
+      ) as ContentBlock[],
+    });
+
+    for (const b of toolBlocks) {
+      const inputObj = toInputObject(b.toolInput ?? '');
+      const t0 = Date.now();
+      let result: string;
+      try {
+        result = await execTool(b.toolName ?? '', inputObj);
+      } catch {
+        result = 'Gagal menjalankan tool tersebut. Coba lagi atau jawab berdasarkan konteks yang ada.';
+      }
+      // Audit traceability — args masked at write time only; raw query/result never stored.
+      let argsMasked = '{}';
+      try { argsMasked = mask(JSON.stringify(inputObj)).maskedText; } catch { /* never crash audit prep */ }
+      toolCallsMeta.push({
+        tool: b.toolName ?? 'unknown',
+        args_masked: argsMasked.slice(0, 500),
+        duration_ms: Date.now() - t0,
+        result_chunks: (result.match(/\[Sumber:/g) ?? []).length,
+        result_size: result.length,
+      });
+      history.push({
+        role: 'user',
+        content: [{ toolResult: { toolUseId: b.toolUseId, content: [{ text: result }], status: 'success' } }] as ContentBlock[],
+      });
+    }
+  }
+
+  res.write(`event: metadata\ndata: ${JSON.stringify({ inputTokens, outputTokens })}\n\n`);
+  res.write('event: done\ndata: {}\n\n');
+
+  if (isConversationRequest(request)) {
+    return {
+      status: 'success',
+      inputTokens,
+      outputTokens,
+      modelId: request.modelId,
+      assistantText,
+      toolCallsMeta,
+    } as ConversationInferenceResult;
+  }
+  return { status: 'success', inputTokens, outputTokens, modelId: request.modelId } as InferenceResult;
+}
+
 /**
  * Non-streaming inference for OCR/extraction tasks.
  * Sends a request to Bedrock Converse and returns the full text response.
@@ -407,128 +630,6 @@ export async function generateNonStreaming(
     });
 
     return response.output?.message?.content?.[0]?.text ?? '';
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/**
- * Repair a response that failed verification.
- * Calls Bedrock Converse with a repair system prompt targeting specific violations.
- * Non-streaming — returns the repaired full text, or null on failure.
- *
- * @param modelId     The model that generated the original response.
- * @param messages    The original conversation messages array.
- * @param violations  Verification violations to fix.
- * @param maxTokens   Max tokens for the repair response.
- */
-export async function repairResponse(
-  modelId: string,
-  messages: Message[],
-  violations: Array<{ field: string; issue: string; severity: 'error' | 'warn' }>,
-  maxTokens: number = 4096,
-): Promise<string | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60_000);
-
-  try {
-    const violationDetails = violations
-      .filter(v => v.severity === 'error')
-      .map(v => `- [${v.field}] ${v.issue}`)
-      .join('\n');
-
-    const systemPrompt = [
-      'The previous response had the following issues that MUST be fixed:',
-      '',
-      violationDetails,
-      '',
-      'Revise your response to fix ONLY these specific issues. Keep the original intent, facts, and tone.',
-      'If a required section is missing, add it. If prohibited content exists, remove or replace it.',
-      'Return ONLY the fixed response. No meta-commentary, no explanations, no markdown.',
-      'Preserve ALL other content exactly as-is.',
-    ].join('\n');
-
-    const command = new ConverseCommand({
-      modelId,
-      system: [{ text: systemPrompt }],
-      messages,
-      inferenceConfig: { maxTokens, temperature: 0.1 },
-    });
-
-    const response = await bedrockClient.send(command, {
-      abortSignal: controller.signal,
-    });
-
-    const text = response.output?.message?.content?.[0]?.text?.trim();
-    return text && text.length > 0 ? text : null;
-  } catch (error) {
-    console.error('[repair] Repair generation failed:', (error as Error).message);
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-// ─── Semantic Verification ─────────────────────────────────────────────────────────
-
-/**
- * Lightweight LLM-as-a-judge — checks whether the assistant response is
- * semantically correct and complete for the original prompt.
- *
- * Runs for ALL skills. Uses qwen3-32b with a strict judge prompt, maxTokens=256,
- * temperature=0 for deterministic verdicts.
- *
- * @returns { is_correct, missing_elements } or null on failure (graceful degradation).
- */
-export async function semanticJudge(
-  originalPrompt: string,
-  assistantText: string,
-  _skill: string,
-): Promise<{ is_correct: boolean; missing_elements: string[] } | null> {
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-
-  try {
-    const judgePrompt = [
-      'You are a strict judge evaluating an AI response. Your task: determine if the response accurately and completely answers the user\'s original request.',
-      '',
-      'Rules:',
-      '- Mark is_correct=true ONLY if the response correctly addresses the core request without hallucination.',
-      '- If the response misses important elements, list them in missing_elements.',
-      '- Be strict about factual accuracy for numbers, regulations, and code.',
-      '- Be lenient about phrasing and style — only flag substantive omissions.',
-      '',
-      'Original request:',
-      originalPrompt,
-      '',
-      'AI response:',
-      assistantText,
-      '',
-      'Output ONLY valid JSON: { "is_correct": boolean, "missing_elements": string[] }',
-    ].join('\n');
-
-    const command = new ConverseCommand({
-      modelId: 'qwen.qwen3-32b-v1:0',
-      system: [{ text: 'You are a factual accuracy judge. Reply with JSON only.' }],
-      messages: [{ role: 'user', content: [{ text: judgePrompt }] }],
-      inferenceConfig: { maxTokens: 256, temperature: 0 },
-    });
-
-    const response = await bedrockClient.send(command, { abortSignal: controller.signal });
-    const raw = response.output?.message?.content?.[0]?.text?.trim();
-    if (!raw) return null;
-
-    const jsonStr = raw.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    const parsed = JSON.parse(jsonStr);
-
-    return {
-      is_correct: parsed.is_correct === true,
-      missing_elements: Array.isArray(parsed.missing_elements) ? parsed.missing_elements : [],
-    };
-  } catch (error) {
-    console.error('[semantic-judge] Judge call failed:', (error as Error).message);
-    return null;
   } finally {
     clearTimeout(timeout);
   }

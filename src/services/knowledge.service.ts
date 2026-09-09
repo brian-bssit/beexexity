@@ -1,6 +1,6 @@
 /**
  * Knowledge Service — indexing and retrieval for the MCP Knowledge Layer (Tier 2).
- * Hybrid search: semantic (pgvector cosine) primary, keyword (ILIKE) fallback.
+ * Semantic retrieval (pgvector cosine) gated by a minimum relevance score.
  * Graceful degradation: any failure returns [] — inference never blocked.
  * @see docs/features/mcp-knowledge-layer/
  */
@@ -66,7 +66,10 @@ function mapChunk(row: KnowledgeRow): KnowledgeChunk {
   };
 }
 
-/** Deterministic ordering: more-binding sources rank first (regulatory → other). */
+/** Tiebreaker: at equal distance, more-binding sources rank first (regulatory → other).
+ *  Primary sort is semantic distance — ranking binding first demotes the most relevant
+ *  non-regulatory chunk behind any 5 regulatory rows (e.g. a functional-spec answer to
+ *  "jelaskan aplikasi digivisit" lost to irrelevant FAQ rows), wrongly emptying retrieval. */
 const BINDING_LEVEL_ORDER = `CASE COALESCE(binding_level, 'informational')
   WHEN 'regulatory' THEN 0
   WHEN 'contractual' THEN 1
@@ -81,26 +84,6 @@ const DOC_TYPE_MAP: Record<string, string> = { FAQ: 'PRODUCT_FAQ', OTHER: 'MEMO'
 const BINDING_LEVEL_MAP: Record<string, string> = { advisory: 'procedural', commentary: 'informational' };
 const SENSITIVITY_MAP: Record<string, string> = { confidential: 'restricted' };
 
-/** Common stopwords + question words — dropped from keyword queries. */
-const STOPWORDS = new Set([
-  'apa', 'apakah', 'bagaimana', 'berapa', 'mengapa', 'mana', 'kapan',
-  'yang', 'dan', 'atau', 'untuk', 'dari', 'dengan', 'pada', 'ini', 'itu',
-  'adalah', 'saya', 'anda', 'kita', 'kami', 'kamu', 'mereka',
-  'di', 'ke', 'se', 'tentang', 'mengenai', 'harus', 'boleh', 'bisa',
-  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'how',
-  'of', 'to', 'in', 'on', 'and', 'for',
-]);
-
-/** Tokenize a query into significant keywords for keyword-based retrieval. */
-function tokenizeKeywords(text: string): string[] {
-  const words = text.toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .map((w) => w.trim())
-    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
-  return [...new Set(words)];
-}
-
 async function searchInternal(queryText: string, topK: number): Promise<KnowledgeChunk[]> {
   const embedding = (await generateEmbeddings([queryText], 'search_query'))[0]!;
   const vec = embeddingToSql(embedding);
@@ -110,34 +93,19 @@ async function searchInternal(queryText: string, topK: number): Promise<Knowledg
             1 - (embedding <=> $1::vector) AS score
      FROM knowledge_documents
      WHERE embedding IS NOT NULL
-     ORDER BY ${BINDING_LEVEL_ORDER}, embedding <=> $1::vector
+     ORDER BY embedding <=> $1::vector, ${BINDING_LEVEL_ORDER}
      LIMIT $2`,
     [vec, topK],
   );
 
-  const semantic = rows.map(mapChunk);
-  const maxScore = semantic[0]?.score ?? 0;
-
-  // Hybrid fallback: semantic below threshold → tokenized keyword OR-match.
-  if (semantic.length === 0 || maxScore < config.knowledge.hybridThreshold) {
-    const keywords = tokenizeKeywords(queryText);
-    if (keywords.length === 0) return [];
-
-    const orClauses = keywords.map((_, i) => `content ILIKE $${i + 1}`).join(' OR ');
-    const matchScore = keywords.map((_, i) => `(content ILIKE $${i + 1})::int`).join(' + ');
-    const { rows: kwRows } = await query<KnowledgeRow>(
-      `SELECT id, content, title, doc_type, binding_level, source_type, metadata
-       FROM knowledge_documents
-       WHERE ${orClauses}
-       ORDER BY (${matchScore}) DESC, ${BINDING_LEVEL_ORDER}, created_at DESC
-       LIMIT $${keywords.length + 1}`,
-      [...keywords.map((k) => `%${k}%`), topK],
-    );
-    return kwRows.map((r) => mapChunk(r));
-  }
-
-  // Semantic path: drop low-relevance noise.
-  return semantic.filter((c) => c.score >= config.knowledge.minRelevanceScore);
+  // Pure semantic relevance gate: chunks below minRelevanceScore are "not covered"
+  // by the KB, so they are dropped and retrieval returns [] — the sovereign routing
+  // seam then escalates open text to Tier 3 (auto-tier-3). The keyword ILIKE fallback
+  // that previously ran here resurrected one broad FAQ chunk for ANY weak-semantic
+  // query via generic word overlap (e.g. "siapa presiden Indonesia saat ini" scores
+  // 0.26 semantically yet matched FAQ words like "presiden"/"Indonesia"), so retrieval
+  // was never empty and Tier-3 escalation never fired. See /audit + tier-3 fix.
+  return rows.map(mapChunk).filter((c) => c.score >= config.knowledge.minRelevanceScore);
 }
 
 /**
@@ -242,7 +210,159 @@ export async function indexDocument(params: IndexDocumentParams): Promise<IndexD
   return { id: firstId, chunkIndex: inserted };
 }
 
-/** Delete a knowledge document chunk by id. */
-export async function deleteDocument(id: string): Promise<void> {
-  await query('DELETE FROM knowledge_documents WHERE id = $1', [id]);
+/* ─── Admin management (grouped by source_file) ─────────────────────────── */
+
+/** A single ingested document as exposed by the admin listing endpoint. */
+export interface IngestedDocument {
+  sourceFile: string;
+  title: string | null;
+  version: string | null;
+  docType: string | null;
+  bindingLevel: string | null;
+  sensitivity: string | null;
+  sourceType: string | null;
+  chunkCount: number;
+  createdAt: Date | string;
+}
+
+export interface IngestedDocumentFilters {
+  search?: string | null;
+  docType?: string | null;
+  bindingLevel?: string | null;
+  sensitivity?: string | null;
+  sourceType?: string | null;
+}
+
+interface IngestedRow {
+  source_file: string;
+  title: string | null;
+  version: string | null;
+  doc_type: string | null;
+  binding_level: string | null;
+  sensitivity: string | null;
+  source_type: string | null;
+  chunk_count: number;
+  created_at: Date | string;
+}
+
+/**
+ * List ingested documents grouped by `source_file` (best-effort identity — see
+ * docs/features/mcp-knowledge-layer + admin UI notice). Returns documents + total
+ * for pagination.
+ */
+export async function getIngestedDocuments(
+  filters: IngestedDocumentFilters,
+  limit: number,
+  offset: number,
+): Promise<{ documents: IngestedDocument[]; total: number }> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters.search) {
+    params.push(`%${filters.search}%`);
+    conditions.push(`(title ILIKE $${params.length} OR source_file ILIKE $${params.length})`);
+  }
+  const exact: Array<[string, string | null | undefined]> = [
+    ['doc_type', filters.docType],
+    ['binding_level', filters.bindingLevel],
+    ['sensitivity', filters.sensitivity],
+    ['source_type', filters.sourceType],
+  ];
+  for (const [col, val] of exact) {
+    if (val) {
+      params.push(val);
+      conditions.push(`${col} = $${params.length}`);
+    }
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const { rows: countRows } = await query<{ total: string }>(
+    `SELECT COUNT(*) AS total FROM knowledge_documents ${where}`,
+    [...params], // copy — `params` is extended with limit/offset below for the list query
+  );
+  const total = Number(countRows[0]?.total ?? 0);
+
+  params.push(limit, offset);
+  const { rows } = await query<IngestedRow>(
+    `SELECT source_file,
+            MAX(title) AS title,
+            MAX(metadata->>'version') AS version,
+            MAX(doc_type) AS doc_type,
+            MAX(binding_level) AS binding_level,
+            MAX(sensitivity) AS sensitivity,
+            MAX(source_type) AS source_type,
+            COUNT(*)::int AS chunk_count,
+            MIN(created_at) AS created_at
+     FROM knowledge_documents
+     ${where}
+     GROUP BY source_file
+     ORDER BY created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+  );
+
+  return {
+    documents: rows.map((r) => ({
+      sourceFile: r.source_file,
+      title: r.title,
+      version: r.version, // null when unset — UI renders "-"
+      docType: r.doc_type,
+      bindingLevel: r.binding_level,
+      sensitivity: r.sensitivity,
+      sourceType: r.source_type,
+      chunkCount: r.chunk_count,
+      createdAt: r.created_at,
+    })),
+    total,
+  };
+}
+
+export interface DocumentMetadataUpdate {
+  title?: string;
+  docType?: string;
+  bindingLevel?: string;
+  sensitivity?: string;
+  sourceType?: string;
+  version?: string;
+}
+
+/**
+ * Update document-level metadata, cascading to every chunk of `sourceFile`.
+ * Empty-string `version` is treated as absent (never overwrites an existing value).
+ * Returns the number of chunks updated.
+ */
+export async function updateDocumentMetadata(
+  sourceFile: string,
+  update: DocumentMetadataUpdate,
+): Promise<number> {
+  const { rowCount } = await query(
+    `UPDATE knowledge_documents SET
+       title = COALESCE($1, title),
+       doc_type = COALESCE($2, doc_type),
+       binding_level = COALESCE($3, binding_level),
+       sensitivity = COALESCE($4, sensitivity),
+       source_type = COALESCE($5, source_type),
+       metadata = CASE
+         WHEN $6 IS NOT NULL AND $6 <> '' THEN
+           jsonb_set(COALESCE(metadata, '{}'::jsonb), '{version}', to_jsonb($6::text))
+         ELSE metadata
+       END
+     WHERE source_file = $7`,
+    [
+      update.title ?? null,
+      update.docType ?? null,
+      update.bindingLevel ?? null,
+      update.sensitivity ?? null,
+      update.sourceType ?? null,
+      update.version ?? null,
+      sourceFile,
+    ],
+  );
+  return rowCount ?? 0;
+}
+
+/** Delete every chunk belonging to `sourceFile`. Returns the number deleted. */
+export async function deleteDocumentBySourceFile(sourceFile: string): Promise<number> {
+  const { rowCount } = await query('DELETE FROM knowledge_documents WHERE source_file = $1', [sourceFile]);
+  return rowCount ?? 0;
 }

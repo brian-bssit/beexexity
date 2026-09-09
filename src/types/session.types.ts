@@ -4,6 +4,7 @@
  */
 
 import type { InferenceResult } from './inference.types.js';
+import type { ToolCallAuditMeta } from './audit.types.js';
 
 export interface Session {
   id: string;               // UUID
@@ -67,6 +68,8 @@ export interface ConversationInferenceRequest {
 
 export interface ConversationInferenceResult extends InferenceResult {
   assistantText: string;  // Full accumulated assistant response for storage
+  /** Per-call Tier-1 tool audit metadata (present only when the tool loop ran). */
+  toolCallsMeta?: ToolCallAuditMeta[];
 }
 
 // ── Chat History Sidebar Types ──

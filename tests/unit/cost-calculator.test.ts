@@ -37,7 +37,7 @@ describe('loadPricingConfig', () => {
     expect(config).not.toBeNull();
     expect(config!.currency).toBe('USD');
     expect(config!.lastUpdated).toBe('2026-06-29');
-    expect(Object.keys(config!.models)).toHaveLength(10);
+    expect(Object.keys(config!.models)).toHaveLength(12); // 10 Bedrock/Cohere + qwen3.7-flash + MiniMax-M2.7 (Tier 3)
   });
 
   it('should return null for a non-existent file path', () => {

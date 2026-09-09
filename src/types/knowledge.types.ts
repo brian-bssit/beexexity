@@ -3,6 +3,30 @@
  * @see docs/features/mcp-knowledge-layer/
  */
 
+/**
+ * Closed-enum values enforced by PostgreSQL CHECK constraints (migrations 030) —
+ * single source of truth for backend validation (PATCH /documents/:sourceFile/metadata).
+ * Frontend (admin.html) hardcodes matching <option> lists — static HTML can't import TS.
+ */
+export const DOC_TYPES = [
+  'SOP', 'MEMO', 'REGULATION', 'PRODUCT_FAQ', 'HKR', 'HUK', 'AUDIT',
+  'JUKNIS', 'BRD', 'FSD', 'PKS', 'UAT', 'SIT', 'PROJECT_CHARTER',
+  'IT_RD', 'HCP', 'CAB', 'ADR', 'SAF',
+] as const;
+export type DocType = (typeof DOC_TYPES)[number];
+
+export const BINDING_LEVELS = [
+  'regulatory', 'contractual', 'procedural', 'directive',
+  'assessment', 'informational', 'other',
+] as const;
+export type BindingLevel = (typeof BINDING_LEVELS)[number];
+
+export const SOURCE_TYPES = ['official', 'internal', 'hukumonline'] as const;
+export type SourceType = (typeof SOURCE_TYPES)[number];
+
+export const SENSITIVITIES = ['restricted', 'internal', 'public'] as const;
+export type Sensitivity = (typeof SENSITIVITIES)[number];
+
 /** A single retrieved knowledge chunk, ready to be injected into the system prompt. */
 export interface KnowledgeChunk {
   id: string;

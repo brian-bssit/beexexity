@@ -9,6 +9,9 @@ import { ALLOWED_MODELS } from '../types/inference.types.js';
 import { query } from '../config/database.js';
 import { TokenPayload } from '../types/auth.types.js';
 import { ErrorResponse } from '../types/error.types.js';
+import { config } from '../config/index.js';
+import { listModels as listTier3Models, setModels as setTier3Models, isEnabled as isTier3Enabled } from '../services/tier3.service.js';
+import { listTerms, addTerm, deleteTerm } from '../services/restricted-terms.service.js';
 
 /**
  * Admin routes — user management endpoints restricted to admin role.
@@ -421,80 +424,6 @@ router.put('/model-access/:modelId', async (req: Request, res: Response): Promis
   }
 });
 
-// ── Discovered Roles (PostgreSQL) ─────────────────────────────────────────
-
-/**
- * GET /api/v1/admin/discovered-roles?status=new
- * Returns discovered roles filtered by status: new (default), accepted, rejected, deployed.
- */
-router.get('/discovered-roles', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const status = (req.query.status as string) || 'new';
-    const { rows } = await query(
-      `SELECT role, status, count, last_seen, sample_context, sample_intent
-       FROM discovered_roles
-       WHERE status = $1
-       ORDER BY count DESC, last_seen DESC`,
-      [status],
-    );
-    res.json(rows.map(r => ({
-      role: r.role,
-      count: r.count,
-      lastSeen: r.last_seen,
-      sampleContext: r.sample_context || '',
-      sampleIntent: r.sample_intent || '',
-    })));
-  } catch { res.json([]); }
-});
-
-/**
- * POST /api/v1/admin/discovered-roles/accept
- * Mark a role as accepted (candidate for taxonomy).
- */
-router.post('/discovered-roles/accept', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { role } = req.body;
-    if (!role) { res.status(400).json({ error: 'Missing role' }); return; }
-    await query(
-      `UPDATE discovered_roles SET status = 'accepted', updated_at = NOW() WHERE role = $1`,
-      [role],
-    );
-    res.json({ ok: true });
-  } catch { res.status(500).json({ error: 'Failed to accept role' }); }
-});
-
-/**
- * POST /api/v1/admin/discovered-roles/reject
- * Mark a role as rejected (not a valid skill).
- */
-router.post('/discovered-roles/reject', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { role } = req.body;
-    if (!role) { res.status(400).json({ error: 'Missing role' }); return; }
-    await query(
-      `UPDATE discovered_roles SET status = 'rejected', updated_at = NOW() WHERE role = $1`,
-      [role],
-    );
-    res.json({ ok: true });
-  } catch { res.status(500).json({ error: 'Failed to reject role' }); }
-});
-
-/**
- * POST /api/v1/admin/discovered-roles/deploy
- * Mark a role as deployed (added to taxonomy code).
- */
-router.post('/discovered-roles/deploy', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { role } = req.body;
-    if (!role) { res.status(400).json({ error: 'Missing role' }); return; }
-    await query(
-      `UPDATE discovered_roles SET status = 'deployed', updated_at = NOW() WHERE role = $1`,
-      [role],
-    );
-    res.json({ ok: true });
-  } catch { res.status(500).json({ error: 'Failed to deploy role' }); }
-});
-
 /**
  * GET /api/v1/admin/config
  * Return current app configuration values.
@@ -531,6 +460,158 @@ router.put('/config', async (req: Request, res: Response): Promise<void> => {
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'FAILED_TO_UPDATE_CONFIG', message: 'Failed to update configuration' });
+  }
+});
+
+/**
+ * GET /api/v1/admin/env
+ * Effective runtime values of boot-time environment knobs (env-only secrets are
+ * never returned). Readable/overridable at runtime via PUT — env file untouched.
+ */
+router.get('/env', (_req: Request, res: Response): void => {
+  res.json({
+    knowledgeMinScore: config.knowledge.minRelevanceScore,
+    routingMetadataEnabled: config.routing.metadataEnabled,
+    tier3Enabled: config.routing.externalTier3.enabled,
+  });
+});
+
+/**
+ * PUT /api/v1/admin/env
+ * Apply runtime overrides for env-driven knobs. Mutates the live config singleton
+ * (consumers read these values per-request) — does not write .env, resets on
+ * restart. KNOWLEDGE_MIN_SCORE is the primary backtesting knob.
+ */
+router.put('/env', (req: Request, res: Response): void => {
+  const { knowledgeMinScore, routingMetadataEnabled, tier3Enabled } = req.body ?? {};
+  if (knowledgeMinScore !== undefined) {
+    if (typeof knowledgeMinScore !== 'number' || !Number.isFinite(knowledgeMinScore) || knowledgeMinScore < 0 || knowledgeMinScore > 1) {
+      res.status(400).json({ error: 'VALIDATION_ERROR', message: 'knowledgeMinScore must be a number in [0, 1]' });
+      return;
+    }
+    (config.knowledge as { minRelevanceScore: number }).minRelevanceScore = knowledgeMinScore;
+  }
+  const routing = config.routing as { metadataEnabled: boolean; externalTier3: { enabled: boolean } };
+  if (routingMetadataEnabled !== undefined) {
+    if (typeof routingMetadataEnabled !== 'boolean') {
+      res.status(400).json({ error: 'VALIDATION_ERROR', message: 'routingMetadataEnabled must be a boolean' });
+      return;
+    }
+    routing.metadataEnabled = routingMetadataEnabled;
+  }
+  if (tier3Enabled !== undefined) {
+    if (typeof tier3Enabled !== 'boolean') {
+      res.status(400).json({ error: 'VALIDATION_ERROR', message: 'tier3Enabled must be a boolean' });
+      return;
+    }
+    routing.externalTier3.enabled = tier3Enabled;
+  }
+  res.json({ ok: true });
+});
+
+/**
+ * GET /api/v1/admin/tier3
+ * Read-only gateway status + admin-managed external model registry. API key never returned.
+ */
+router.get('/tier3', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const cfg = config.routing.externalTier3;
+    let baseUrlHost = '';
+    try { baseUrlHost = cfg.baseUrl ? new URL(cfg.baseUrl).host : ''; } catch { /* keep empty */ }
+    const models = await listTier3Models();
+    res.json({
+      enabled: cfg.enabled,
+      gatewayReady: isTier3Enabled(),
+      baseUrlHost,
+      apiKeySet: !!cfg.apiKey,
+      models,
+      defaultModel: models.find((m) => m.isDefault)?.modelId ?? null,
+    });
+  } catch {
+    res.status(500).json({ error: 'FAILED_TO_LOAD_TIER3', message: 'Failed to load Tier-3 configuration' });
+  }
+});
+
+/**
+ * PUT /api/v1/admin/tier3
+ * Replace the external model registry (upsert list, delete missing, set single default).
+ */
+router.put('/tier3', async (req: Request, res: Response): Promise<void> => {
+  const { models, defaultModel } = req.body;
+  if (!Array.isArray(models) || models.some((m: unknown) =>
+    !m || typeof m !== 'object'
+    || typeof (m as { modelId?: unknown }).modelId !== 'string'
+    || !((m as { modelId?: string }).modelId ?? '').trim()
+    || typeof (m as { enabled?: unknown }).enabled !== 'boolean')) {
+    res.status(400).json({ error: 'VALIDATION_ERROR', message: 'models must be [{ modelId: string, enabled: boolean }]' });
+    return;
+  }
+  if (defaultModel !== undefined && typeof defaultModel !== 'string') {
+    res.status(400).json({ error: 'VALIDATION_ERROR', message: 'defaultModel must be a string' });
+    return;
+  }
+  try {
+    const cleaned = (models as Array<{ modelId: string; enabled: boolean }>)
+      .map((m) => ({ modelId: m.modelId.trim().slice(0, 128), enabled: m.enabled }));
+    await setTier3Models(cleaned, defaultModel);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'FAILED_TO_UPDATE_TIER3', message: 'Failed to update Tier-3 models' });
+  }
+});
+
+/**
+ * GET /api/v1/admin/restricted-terms
+ * List the admin-managed restricted-word lexicon.
+ */
+router.get('/restricted-terms', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.json({ terms: await listTerms() });
+  } catch {
+    res.status(500).json({ error: 'FAILED_TO_LOAD_TERMS', message: 'Failed to load restricted terms' });
+  }
+});
+
+/**
+ * POST /api/v1/admin/restricted-terms  body { term }
+ * Add a restricted word. 400 invalid, 409 duplicate.
+ */
+router.post('/restricted-terms', async (req: Request, res: Response): Promise<void> => {
+  const term = req.body?.term;
+  if (typeof term !== 'string' || !term.trim()) {
+    res.status(400).json({ error: 'VALIDATION_ERROR', message: 'term is required' });
+    return;
+  }
+  try {
+    const added = await addTerm(term);
+    if (!added) {
+      res.status(409).json({ error: 'DUPLICATE_TERM', message: `Term already exists: ${term.trim()}` });
+      return;
+    }
+    res.status(201).json({ ok: true, term: term.trim() });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('1-128')) {
+      res.status(400).json({ error: 'VALIDATION_ERROR', message: error.message });
+      return;
+    }
+    res.status(500).json({ error: 'FAILED_TO_ADD_TERM', message: 'Failed to add restricted term' });
+  }
+});
+
+/**
+ * DELETE /api/v1/admin/restricted-terms/:term
+ * Remove a restricted word. 404 if not present.
+ */
+router.delete('/restricted-terms/:term', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const deleted = await deleteTerm(String(req.params.term));
+    if (!deleted) {
+      res.status(404).json({ error: 'TERM_NOT_FOUND', message: 'Term not found' });
+      return;
+    }
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'FAILED_TO_DELETE_TERM', message: 'Failed to delete restricted term' });
   }
 });
 

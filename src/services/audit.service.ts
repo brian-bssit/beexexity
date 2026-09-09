@@ -15,6 +15,10 @@ interface PricingConfigFile {
  * Persists request metadata to the audit_logs table asynchronously.
  * Fire-and-forget pattern — never blocks the inference response.
  *
+ * Tahap 1: complexity/reasoning/routing-context/contract fields and the
+ * orchestration (sequential-reasoning) fields are no longer written. The DB
+ * columns remain (nullable) for historical rows and session preview queries.
+ *
  * @see Requirements 8.1, 8.2, 8.3, 8.4
  */
 class AuditService {
@@ -81,9 +85,7 @@ class AuditService {
           total_file_size,
           is_multimodal,
           routing_state,
-          complexity_score,
           routing_reason_code,
-          reasoning_summary,
           executed_model_id,
           manual_override_applied,
           modality_flags,
@@ -95,11 +97,6 @@ class AuditService {
           session_state,
           turn_count,
           model_pricing_snapshot,
-          orchestration_meta,
-          orchestration_group_id,
-          orchestration_step_order,
-          routing_context,
-          routing_intent,
           session_context,
           billed_user_id,
           billed_group,
@@ -108,8 +105,10 @@ class AuditService {
           application_id,
           passthrough,
           knowledge_sources,
-          embedding_input_tokens
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42)`,
+          embedding_input_tokens,
+          tool_calls_meta,
+          orchestration_meta
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)`,
         [
           entry.timestamp,
           entry.userId,
@@ -125,9 +124,7 @@ class AuditService {
           entry.totalFileSize ?? null,
           entry.isMultimodal ?? false,
           entry.routingState ?? null,
-          entry.complexityScore ?? null,
           entry.routingReasonCode ?? null,
-          entry.reasoningSummary ?? null,
           entry.executedModelId ?? null,
           entry.manualOverrideApplied ?? false,
           entry.modalityFlags ? JSON.stringify(entry.modalityFlags) : null,
@@ -139,11 +136,6 @@ class AuditService {
           entry.sessionState ?? null,
           entry.turnCount ?? null,
           pricingSnapshot ? JSON.stringify(pricingSnapshot) : null,
-          entry.orchestrationMeta ? JSON.stringify(entry.orchestrationMeta) : null,
-          entry.orchestrationGroupId ?? null,
-          entry.orchestrationStepOrder ?? null,
-          entry.routingContext ?? null,
-          entry.routingIntent ?? null,
           entry.sessionContext ?? null,
           entry.billedUserId ?? null,
           entry.billedGroup ?? null,
@@ -153,6 +145,8 @@ class AuditService {
           entry.passthrough ?? false,
           entry.knowledgeSourceIds ? JSON.stringify(entry.knowledgeSourceIds) : null,
           entry.embeddingInputTokens ?? null,
+          entry.toolCallsMeta && entry.toolCallsMeta.length > 0 ? JSON.stringify(entry.toolCallsMeta) : null,
+          entry.orchestrationMeta ? JSON.stringify(entry.orchestrationMeta) : null,
         ],
       );
     } catch (error) {

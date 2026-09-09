@@ -12,6 +12,8 @@
 | Language | TypeScript | 5.6+, `NodeNext` module resolution |
 | Framework | Express.js | 4.21+ |
 | Database | PostgreSQL (GCP Cloud SQL) | pg Pool (max 20), SSL via `rejectUnauthorized: false` |
+| Vector search | pgvector | Cosine similarity (`<=>`) on VECTOR(1536), relevance gate |
+| Embeddings | Cohere Embed v4 (Bedrock inference profile) | `global.cohere.embed-v4:0`, 1536-d, cross-region from ap-southeast-3 |
 | AI Models | AWS Bedrock | ap-southeast-3 (Jakarta) only |
 | Bedrock SDK | `@aws-sdk/client-bedrock-runtime` | ^3.700 |
 | Document parsing | `pdf-parse`, `mammoth`, `officeparser`, `cheerio`, `xlsx`, `turndown` + GFM | PDF, DOCX, PPTX, XLSX, HTML, Markdown output |
@@ -26,7 +28,8 @@
 | Dev server | `tsx watch` | Hot reload |
 | Property testing | `fast-check` | For PII masker |
 | JSON body limit | 10MB | Previously 10KB, raised for long prompts |
-| Default model | Qwen3 235B A22B | Previously Auto (now user-facing default)
+| Routing | Sovereign-tier (Phase 2) | Auto = restricted (PII/lexicon) → private Bedrock (`auto-tier-1`); open text → private default; gateway-on + empty knowledge retrieval → external Tier-3 (`auto-tier-3`). Zero LLM routing calls; manual + passthrough preserved |
+| Default model | Auto → Qwen3 235B A22B | Frontend model dropdown defaults to "Auto"; auto route → `qwen.qwen3-235b-a22b-2507-v1:0` (env `AUTO_MODEL_ID`); access-denied fallback → qwen3-32b |
 
 ### Deployment targets
 
@@ -66,23 +69,30 @@ src/
 ├── routes/
 │   ├── auth.routes.ts        # POST /login, POST /google, GET /google/config, POST /change-password
 │   ├── admin.routes.ts       # POST|PUT /users, GET /usage/cost (extended: applicationId, apiKeyId, username filters), POST /users/bulk
-│   │                         # + GET/PUT /config (passthrough_mode)
-│   │                         # + GET/POST /discovered-roles (accept/reject/deploy)
+│   │                         # + GET/PUT /config (passthrough_mode), GET/PUT /env (runtime overrides), CRUD /restricted-terms,
+│   │                         #   GET/PUT /tier3 (external model registry), GET /cost/report, GET /feedback…
 │   ├── admin-applications.routes.ts  # CRUD /applications, CRUD /applications/:id/keys, PUT /keys/:id, DELETE /keys/:id
 │   ├── models.routes.ts      # GET / (available models with pricing)
-│   ├── inference.routes.ts   # POST /generate (SSE streaming + grounding + semantic judge), POST /batch (multi-tenant API key auth, x-username header)
+│   ├── inference.routes.ts   # POST /generate (SSE streaming + grounding), POST /batch (multi-tenant API key auth, x-username header)
 │   │                         # + GET /sessions/active, POST /sessions/reset
 │   ├── generation.routes.ts  # POST /pptx, POST /pdf (document HTML for PDF, slide HTML for PPTX, multipart, context injection)
 │   ├── session.routes.ts     # GET /, GET /:id/messages, GET /:id/stats, POST /:id/resume
-│   └── feedback.routes.ts    # POST / (submit), GET/PUT /admin (admin review + synthesis)
+│   ├── feedback.routes.ts    # POST / (submit), GET/PUT /admin (admin review + synthesis)
+│   └── knowledge.routes.ts   # Knowledge (Tier 2): POST /documents (async 202), POST /metadata/extract, GET /documents,
+│                            #   GET /documents/:id/status, GET /documents/ingested + PATCH/DELETE /documents/:sourceFile (admin classification mgmt)
 ├── services/
 │   ├── auth.service.ts           # Login, JWT sign/verify, user CRUD, Google OAuth
 │   ├── session.service.ts        # Session lifecycle, messages CRUD, stats
-│   ├── inference.service.ts      # Bedrock ConverseStream/Converse/InvokeModel, retry, SSE, OCR, repair, semantic judge (all skills)
-│   ├── routing-engine.service.ts # 24-skill classifier + refinement + complexity scoring + policy + verification
-│   │                            # + validateSkillInvariants() post-classification guard (10 rules)
-│   ├── routing-policy.service.ts # Model selection: manual→long→vision→text
-│   ├── sequential-reasoning.service.ts  # Multi-step planner→executor→synthesizer for complex queries
+│   ├── inference.service.ts      # Bedrock ConverseStream/Converse/InvokeModel, retry, SSE, OCR
+│   ├── routing-engine.service.ts # Sovereign-tier: classifySovereignTier() (PII + restricted lexicon) →
+│   │                            #  restricted 'auto-tier-1' (tier1ModelId||autoModelId); open → 'auto-fixed-model'
+│   │                            #  (+ 'tier3-candidate' when T3 gateway on + text-only + default exists)
+│   ├── routing-policy.service.ts # resolvePolicy — manual override resolution (used by manual branch only)
+│   ├── tier3.service.ts          # getDefaultTier3Model — external Tier-3 default from tier3_models
+│   ├── external-chat.service.ts  # Tier-3 OpenAI-compatible SSE client — bounded ReAct tool loop, reasoning/tool_call SSE, summed tokens, B1 empty-content guard
+│   ├── tool-registry.service.ts  # Safe local tools (get_current_datetime) — offered only to config-allowlisted Tier-3 models
+│   ├── tier1-tools.service.ts    # Tier-1 private-Bedrock tool registry (search_internal_knowledge) + executor — internal
+│   │                            #  pgvector search; search path NOT PII-masked (fully internal, masking corrupts the embed)
 │   ├── pii-masker.service.ts     # Indonesian PII detection (NIK, HP, rekening, nama, bank)
 │   ├── context-assembly.service.ts    # Sliding window, char budget, routing_payload, summary+facts injection
 │   ├── session-memory.service.ts      # Load memory state, summarize evicted, extract facts
@@ -90,12 +100,14 @@ src/
 │   ├── document-extractor.service.ts   # PDF, DOCX, PPTX, XLSX, HTML, JSON, CSV, TXT, MD, XML (output: Markdown)
 │   ├── image-processor.service.ts      # Image buffer → base64 content block
 │   ├── upload-validator.service.ts     # Classify files → documents/images, MIME checks
-│   ├── audit.service.ts                # Fire-and-forget audit logs + api_key_id + application_id FKs
+│   ├── embedding.service.ts            # Cohere Embed v4 — generateEmbedding() + generateEmbeddings() (batch ≤96/call)
+│   ├── knowledge.service.ts            # Tier 2: chunk → hash-dedup → bulk-embed → index; semantic search (2s self-timeout)
+│   ├── restricted-terms.service.ts     # Restricted-word lexicon CRUD (sovereignty classifier, live restrict)
+│   ├── audit.service.ts                # Fire-and-forget audit logs + api_key_id + application_id FKs + tool_calls_meta
 │   ├── cost-reporting.service.ts       # Per-user cost aggregation + application/api-key filters
 │   ├── config.service.ts               # App config (passthrough_mode) with DB + in-memory cache
 │   ├── application.service.ts          # Multi-tenant application CRUD (admin-only)
 │   ├── api-key.service.ts              # API key generate (bex_ + 32 hex, SHA-256), validate, CRUD, timingSafeEqual
-│   ├── few-shot-library.ts             # Per-skill golden examples for format adherence
 │   ├── gotenberg.service.ts            # HTML→PPTX (cheerio→JSZip), HTML→PDF (Chromium, slide + document formats), Office→PDF
 │   ├── pptx-generator.service.ts        # PPTX: HTML slide generation (10 themes, 7 layouts, content-adaptive). PDF: document HTML generation (A4, serif).
 │   ├── pptx-themes.ts                  # 10 CSS Variable-based themes + 7 layout classes
@@ -107,21 +119,21 @@ src/
 │   ├── auth.types.ts            # TokenPayload (role: admin|user|api_key), LoginResult, UserProfile
 │   ├── api-key.types.ts         # Application, ApiKey, ApiKeyCreated, ApiKeyContext
 │   ├── session.types.ts         # Session, StoredMessage, BedrockMessage, AssembledContext, SessionStats
-│   ├── inference.types.ts       # + SequentialStep, SequentialPlan, StepResult, SequentialOrchestrationMeta
-│   ├── routing.types.ts         # 24 skills, PromptContract with behavioral_instructions & output_format
+│   ├── inference.types.ts       # RoutingMetadataEvent (trimmed), ModalityFlags
+│   ├── routing.types.ts         # SkillType='fallback'; RoutingInput (piiDetected)/RoutingDecision (no contract); reasonCode/flags = sovereign seam
+│   ├── knowledge.types.ts       # KnowledgeChunk, index/job params, DOC_TYPE/BINDING_LEVEL/SENSITIVITY maps
 │   ├── pii.types.ts
 │   ├── upload.types.ts          # DocumentFile, ImageFile, ExtractionResult, ContentBuildInput, ContentBlock
-│   ├── audit.types.ts           # + apiKeyId, applicationId (deprecates apiKeyUsed)
+│   ├── audit.types.ts           # + apiKeyId, applicationId (deprecates apiKeyUsed); ToolCallAuditMeta + toolCallsMeta
 │   ├── pptx.types.ts           # Content JSON schema for JSON fallback path (6 slide types), HTML path uses CSS layouts
 │   ├── pricing.types.ts
 │   ├── reporting.types.ts       # + applicationId, applicationName, apiKeyId, keyPrefix on UserCostReport
 │   └── error.types.ts
 └── scripts/
-    └── run-migrations.ts    # Idempotent migration runner (creates _migrations table)
+    ├── run-migrations.ts    # Idempotent migration runner (creates _migrations table)
+    └── ingest-knowledge.ts  # CLI batch ingest — folder → extract → chunk → embed → index
 
 data/                            # Runtime data (not committed to git)
-├── fallback-roles.ndjson         # Raw discovery log for novel fallback roles
-└── discovered-roles-state.json   # Accept/reject/deploy state per role
 
 pptx-service/                     # Python PPTX microservice (separate Cloud Run deployment)
 ├── main.py                       # FastAPI app: /health, /generate
@@ -135,17 +147,24 @@ cloudbuild-pptx.yaml              # Separate Cloud Build trigger for python-pptx
 migrations/
 ├── 001_initial_schema.sql ... 021_app_config.sql
 ├── 022_applications_api_keys.sql   # Multi-tenant: applications + api_keys tables
-└── 023_alter_audit_logs.sql        # Multi-tenant: api_key_id, application_id FKs, nullable username
+├── 023_alter_audit_logs.sql        # Multi-tenant: api_key_id, application_id FKs, nullable username
+├── 024…030_knowledge_layer.sql     # Knowledge (Tier 2): knowledge_documents (pgvector VECTOR(1536)),
+│                                   #   knowledge_ingestion_jobs, audit knowledge_sources + embedding_input_tokens,
+│                                   #   classification → columns + CHECK (19 doc_type / 7 binding_level / 3 source_type / 3 sensitivity)
+├── 031_knowledge_admin_indexes.sql # Knowledge admin: source_file index (lookup/grouping)
+├── 032_tier3_models.sql            # Tier-3 external model registry (admin-managed, one default)
+├── 033_restricted_terms.sql        # Restricted-word lexicon (sovereignty classifier, admin-editable)
+└── 034_tier1_tool_calls_meta.sql   # audit_logs.tool_calls_meta JSONB (Tier-1 tool-loop audit, default '[]')
 
 tests/
-└── unit/                           # 30 test files, 414 tests
+└── unit/                           # 40 test files, 530 tests
     ├── api-key.service.test.ts     # 13 tests (generate, hash, validate, deactivate, delete)
     ├── application.service.test.ts # 12 tests (CRUD, duplicate rejection, key_count)
     ├── api-key-auth.middleware.test.ts  # 8 tests (6 auth scenarios + error paths)
     ├── admin-applications.routes.test.ts # 10 tests (CRUD endpoints)
-    ├── routing-engine.test.ts      # 14 tests
-    ├── sequential-reasoning.test.ts # 16 tests
-    └── ... (25 other test files)
+    ├── routing-engine.test.ts      # 17 tests (sovereign classify + auto/manual/passthrough)
+    ├── tier1-tools.service.test.ts # 8 tests (registry, top-K cap, doc_type filter, no-PII-mask, config default-OFF)
+    └── ... (31 other test files)
 
 docs/
 ├── readme.md                    # This file
@@ -157,14 +176,18 @@ docs/
 │   └── evaluation-mcp-knowledge-layer.md
 ├── features/                    # Feature docs — requirements/design/tasks per feature
 │   ├── google-auth/             # Google OAuth feature
-│   ├── mcp-knowledge-layer/     # MCP knowledge layer (Tier 2) — next major feature
+│   ├── mcp-knowledge-layer/     # MCP knowledge layer (Tier 2) — implemented (phases 1-4 complete)
 │   ├── model-access/            # Model access control design
 │   ├── multi-tenant-api-key/    # Multi-tenant API key feature
 │   ├── passthrough-mode/        # Passthrough mode feature
+│   ├── auto-deterministic/      # Tahap 1: auto = fixed model, zero LLM routing — implemented
 │   ├── pptx-generation/         # PPTX/PDF generation feature
-│   ├── sequential-reasoning/    # Sequential reasoning feature
+│   ├── sequential-reasoning/    # Superseded — removed in Tahap 1 (historical)
+│   ├── sovereign-tier-router/   # Phase 2: restricted→private T1 / knowledge-empty→external T3 — implemented
+│   ├── tier3-tools/             # Tier-3 tools & thinking (bounded ReAct, reasoning SSE, config allowlist) — implemented
+│   ├── tier1-tools/             # Tier-1 internal tool loop (search_internal_knowledge, multi-hop RAG) — implemented (default OFF)
 │   ├── sub-agent/               # Sub-agent orchestration design
-│   └── thinking-mode/           # Thinking mode requirements
+│   └── thinking-mode/           # Thinking mode requirements (historical)
 ├── design-notes/                # Historical design explorations & proposals
 │   ├── improvement.md, improvement-CoT.md, llm2-enhance.md
 │   ├── model-private-public.md, new-agents.md, new-agents-v4.md
@@ -176,8 +199,8 @@ docs/
     └── theme-preview.html
 
 public/
-├── admin.html                      # Admin dashboard — 7 tabs: Applications & Keys, Bulk Upload, Usage & Cost, Config, Model Access, Feedback, Discovered Roles
-└── index.html                      # SPA frontend — SSE streaming with progressive render (rAF-throttled), grounding instruction, semantic judge
+├── admin.html                      # Admin dashboard — 7 tabs: Applications & Keys, Bulk Upload, Usage & Cost, Config (incl. runtime Env Overrides), Model Access, Feedback, Knowledge
+└── index.html                      # SPA frontend — SSE streaming with progressive render (rAF-throttled), grounding instruction, model select (Auto default), chat TOC navigation, Tier-3 💭 reasoning + tool badge (a11y-safe)
 ```
 
 ---
@@ -207,38 +230,34 @@ Client → POST /api/v1/inference/generate
       → inference_payload    — BedrockMessage[]
       → routing_payload      — last 2 user msgs + last assistant, ≤ 500 chars
       → evictedMessages[]    — for summary refresh
-  14. Routing engine:
-      a. Determine routingState: 'auto' | 'manual'
-      b. If 'auto' → routeRequest():
-         - unifiedClassifyAndScore()  — single LLM call: skill + complexity + language
-         - validateSkillInvariants()  — 10 deterministic rules, zero LLM cost
-         - refinePrompt()            — skill-aware or follow-up refinement
-         - resolvePolicy()           — model selection
-         → RoutingDecision
-      c. If 'manual' → build RoutingDecision directly, skip routing
+  14. Routing engine (Tahap 1 — deterministic, zero LLM routing calls):
+      a. Determine routingState: 'auto' | 'manual' | 'passthrough'
+      b. 'auto' → selectAutoModel(): model = config.routing.autoModelId (qwen3-235b)
+         - if checkModelAccess() denies user access → DEFAULT_MODEL (qwen3-32b) + flag 'auto-access-denied'
+         - reasonCode 'auto-fixed-model'; refinedPrompt = raw prompt (no refinement); skill 'fallback'
+      c. 'manual' → resolvePolicy honors user-selected manualModelId (reasonCode 'manual-override')
+      d. 'passthrough' → raw prompt, minimal system prompt, flag 'passthrough' (forced by Standard Mode)
   15. Emit SSE events:
       event: session      { sessionId }
-      event: routing      { skill, flags, timing, ... }
-  16. Unified dispatch:
-      complexity >= 4 AND routingState !== 'manual'
-      → SequentialReasoner.execute()
-         - planner() → 2-6 step plan (returns null → fallback to generate)
-         - Emit orchestration_plan SSE
-         - executor() + synthesizer() + progressiveSynthesis()
-         - Each step passes language system prompt (e.g. "Respond in indonesian")
-         - Emit delta + done events
-      → else: generate() — Bedrock ConverseStream, SSE delta/metadata/done
-  17. verifyOutput()         — deterministic checks against PromptContract
-  18. Semantic verification  — semanticJudge() for high-stakes skills
-      → event: semantic_verdict (if failed)
-  19. Auto-repair (if verification fails) → repairResponse() → event: repair
-  20. Emit done (sequential reasoning paths only)
-  21. Store assistant msg    — PII-masked, increment turnCount
-  22. Extract facts          — extractFacts() → update extracted_facts JSONB
-  23. Audit log              — metadata-only, fire-and-forget
-  24. Memory update          — if messages evicted, summarizeEvicted() → rolling_summary
-  25. Release turn lock
+      event: routing      { routingState, executedModelId, routingReasonCode, modalityFlags, flags, timing }
+  15a. Knowledge retrieval (Tier 2)  → semantic search, 2s self-timeout, degrade to [] on failure
+       - embed effectivePrompt (Cohere search_query) → cosine top-K (pgvector), sorted by distance first, binding_level only as tiebreak
+       - rows below KNOWLEDGE_MIN_SCORE (default 0.4) dropped — no keyword fallback, so irrelevant
+         queries return [] (graceful → sovereign routing escalates to Tier-3 instead of grounding noise)
+       - emit event: embedding { inputTokens, chunks:[{id,title,docType,score,bindingLevel,sourceType}] }
+       - empty retrieval on a `tier3-candidate` → escalate to external gateway (§4.1 finalize)
+  15b. System prompt enrichment      → role + FORMAT_INSTRUCTION + retrieved reference block + citation rule
+       "[Sumber: {title}, {section}]" + grounding line
+  16. generate() single-shot         — Bedrock ConverseStream, SSE delta/metadata/done
+       (sequential reasoning removed in Tahap 1; multipart two-stage OCR runs first — see §3.4)
+  17. Store assistant msg    — PII-masked, increment turnCount
+  18. Extract facts          — extractFacts() → update extracted_facts JSONB
+  19. Audit log              — metadata-only, fire-and-forget
+  20. Memory update          — if messages evicted, summarizeEvicted() → rolling_summary
+  21. Release turn lock
 ```
+
+**Knowledge scope note:** retrieval steps 15a–15b run on the JSON text-only path. The multipart file-upload path (§3.4) does not invoke knowledge search yet.
 
 ### 3.2 Batch inference (M2M, no session, no streaming)
 
@@ -263,7 +282,7 @@ Client → POST /api/v1/inference/batch
 
 ### 3.3 Passthrough mode (Standard Mode toggle)
 
-When admin enables "Standard Mode" via the admin dashboard, ALL requests bypass routing/refinement.
+When admin enables "Standard Mode" via the admin dashboard, ALL requests are forced to `routingState = 'passthrough'` (bypass the auto model router).
 Triggered by global config flag `app_config.passthrough_mode = true`.
 
 ```
@@ -272,16 +291,13 @@ Client → POST /api/v1/inference/generate
 
   4b. Check global passthrough — configService.getPassthroughMode() (cached in-memory)
   4c. If enabled → force routingState = 'passthrough'
-  9b. routeRequest() returns minimal decision (skill=fallback, no contract, no refinement)
+  9b. routeRequest() returns minimal decision (skill=fallback, raw prompt, flag 'passthrough')
 
   11b. System prompt: "You are a helpful assistant. Respond in {lang}."
        + FORMAT_INSTRUCTION (7 explicit markdown rules)
 
-  12b. NO few-shots injected
-  13c. Skip sequential reasoning
-  14d. NO verification/repair
-  15e. Audit with passthrough=true flag
-  16f. Chat UI shows "⚡ Standard Mode" banner (read-only)
+  12b. Audit with passthrough=true flag
+  13b. Chat UI shows "⚡ Standard Mode" banner (read-only)
 ```
 
 ### 3.4 Multipart inference (with file uploads)
@@ -299,7 +315,7 @@ Same as JSON flow, with additions:
       Stage 1: Nova Lite via InvokeModel (raw API, messages-v1 schema)
       Stage 2: GPT-OSS 120B enhances OCR output
   5j. effectiveDocText      — ocrText (if available) overrides extraction text
-  5k. Unified dispatch: complexity >= 4 → SequentialReasoner, else → generate()
+  5k. generate() single-shot (sequential reasoning removed in Tahap 1)
   5l. Fallback: If enhance model fails → auto-fallback to original routing model
 ```
 
@@ -405,13 +421,14 @@ File input methods:
 ```typescript
 interface RoutingInput {
   originalPrompt: string;           // PII-masked user prompt
+  piiDetected?: boolean;            // maskResult.entityCount > 0 — sovereignty gate signal
   maskedDocumentText?: string;      // PII-masked extracted document text
   hasImages: boolean;
   imageModelRequired: boolean;
-  routingState: 'auto' | 'manual';
+  routingState: 'auto' | 'manual' | 'passthrough';
   manualModelId?: string;           // Set when user manually selects a model
   userId: string;
-  conversationContext?: string;     // Last 2 user messages + last assistant, ≤ 500 chars
+  conversationContext?: string;     // Reserved (unused in Tahap 1) — last 2 user msgs + last assistant
 }
 ```
 
@@ -419,219 +436,111 @@ interface RoutingInput {
 
 ```typescript
 interface RoutingDecision {
-  executedModelId: string;
-  routingState: 'auto' | 'manual';
-  complexityScore: number;          // 1-5
+  executedModelId: string;          // model that will actually run
+  routingState: 'auto' | 'manual' | 'passthrough';
+  complexityScore: number;          // auto: 0; manual/passthrough: defaultFallbackScore — kept for shape-compat
   scoreBand: 'direct-answer' | 'moderate-reasoning' | 'advanced-reasoning';
-  confidence: number;               // 0.0-1.0 from scoring LLM
-  refinedPrompt: string;            // Skill-refined prompt or original fallback
-  routingReasonCode: string;
+  confidence: number;               // 1.0 (no scoring LLM)
+  refinedPrompt: string;            // always the raw PII-masked prompt (no refinement)
+  routingReasonCode: string;        // 'auto-fixed-model' | 'auto-access-denied' | 'manual-override' | 'passthrough'
   reasoningSummary: string;
-  modalityFlags: ModalityFlags;
+  modalityFlags: ModalityFlags;     // textOnly | documentText | image | mixed
   manualOverrideApplied: boolean;
-  flags: string[];                  // e.g. ['skill-demoted:code→fallback', 'refinement-failed']
-  skill: SkillType;
-  contract: PromptContract | null;
-  detectedLanguage?: string;        // e.g. "indonesian", "english"
-  sessionContext?: string;          // Short classifier reasoning for session row
+  passthrough?: boolean;
+  flags: string[];                  // e.g. ['auto-access-denied'] / ['passthrough'] — extensible Phase-2 seam
+  skill: SkillType;                 // always 'fallback' in Tahap 1
+  sessionContext?: string;          // first 120 chars of prompt as session preview
   routingDurationMs?: number;
-  classificationDurationMs?: number;
-  refinementDurationMs?: number;
-  scoringDurationMs?: number;
 }
 ```
 
-#### Step-by-step process
+#### Step-by-step process (deterministic)
 
 ```
 routeRequest(input)
 │
-├── [GUARD] routingState === 'manual'?
-│     ├── resolvePolicy({ manual: true, manualModelId }) → modelId
-│     └── return RoutingDecision (no refinement/scoring)
+├── routingState === 'manual'
+│     └── resolvePolicy({ manual: true, manualModelId }) → modelId (honors user selection)
+│         reasonCode 'manual-override'; manualOverrideApplied: true
 │
-└── routingState === 'auto'?
-      │
-      ├── 1. UNIFIED CLASSIFY + SCORE  (unifiedClassifyAndScore)
-      │     ├── Single qwen3-32b call: returns { skill, complexityScore, language }
-      │     ├── Silent upload (files, no prompt) → fallback (no LLM call)
-      │     └── Document snippet: first 2000 chars + last 1000 chars (head+tail)
-      │
-      ├── 2. INVARIANT CHECK  (validateSkillInvariants)
-      │     ├── 10 deterministic rules, zero LLM cost
-      │     ├── compliance_pre_assessment → requires legal/financial context
-      │     ├── risk_analyst             → requires risk/threat context
-      │     ├── data_analysis            → requires data/statistical context
-      │     ├── code                     → requires ``` or code keywords
-      │     ├── process_optimization     → requires process/workflow context
-      │     ├── credit_analyst           → requires credit/financial context
-      │     ├── meeting_summary          → requires meeting/transcript context
-      │     ├── cloud_security           → requires cloud/infrastructure context
-      │     ├── it_specialist            → requires IT/system context
-      │     └── → demotes to fallback if rule fails, emits flag
-      │
-      ├── 3. PROMPT REFINEMENT  (refinePrompt)
-      │     ├── Turn 1: SKILL_REFINEMENT_PROMPT (generic template with {{skill}})
-      │     ├── Turn 2+: FOLLOW_UP_REFINEMENT_PROMPT (minimal, no role/context)
-      │     ├── → PromptContract { role, context, task, intent, behavioral_instructions, output_format }
-      │     └── Static role from SKILL_TO_ROLE overrides LLM-generated role
-      │
-      ├── 4. LONG CONTEXT CHECK
-      │     └── > 8000 chars prompt+document → override model selection
-      │
-      ├── 5. POLICY RESOLUTION  (resolvePolicy)
-      │     ├── Manual → honor user's selected model
-      │     ├── Long context → qwen3-235b
-      │     ├── Vision + score 1-3 → GPT-OSS 120B
-      │     ├── Vision + score 4-5 → qwen3-235b
-      │     └── Text (any score) → qwen3-235b
-      │
-      └── 6. RETURN RoutingDecision
-            └── includes skill, complexity, flags, contract, language, sessionContext
+├── routingState === 'passthrough'
+│     └── model = manualModelId || qwen3-32b; raw prompt; flag ['passthrough']
+│
+└── routingState === 'auto'            ← default (frontend "Auto")
+      └── classifySovereignTier({ prompt, piiDetected, documentText })   // Phase 2 — deterministic
+            ├── restricted (PII hit OR restricted-word substring)
+            │     → selectAutoModel: model = config.routing.tier1ModelId || autoModelId
+            │         reasonCode 'auto-tier-1', flag ['sovereign-tier-1']   (private, never external)
+            └── open text
+                  └── selectAutoModel({ userId, hasImages, prompt })
+                        ├── checkModelAccess(userId, model) denied
+                        │     → DEFAULT_MODEL (qwen3-32b), 'auto-access-denied', no candidate
+                        ├── gateway on + text-only + default Tier-3 model exists
+                        │     → model = autoModelId, 'auto-fixed-model', flag ['tier3-candidate']
+                        │         (provisional — knowledge search decides the final tier)
+                        └── else → model = autoModelId, 'auto-fixed-model', flags []
+            → refinedPrompt = raw prompt (no refinement), skill = 'fallback', no contract
 ```
 
-### 4.2 The 24 Skills (6 groups)
+**Knowledge-search finalize (JSON text path only):** the routing decision is provisional while the
+request carries `tier3-candidate`. After Cohere retrieval runs, the handler finalizes it — if
+retrieval returned **no** chunks the request escalates to the external gateway
+(`auto-tier-3`, flag `sovereign-tier-3`, model = the enabled default Tier-3 model from
+`tier3_models`), because there is no internal knowledge to keep private; if internal chunks were
+found it **stays private** (candidate flag dropped, `auto-fixed-model`). The routing SSE event for a
+candidate is deferred until this finalize step, so non-candidate requests are byte-identical to
+Tahap 1. Restricted requests never carry the candidate flag and never leave Bedrock.
 
-```
-Generation:    business_writing | creative_writing | brainstorming | prompt_optimizer
-Transformation: summarization | translation | data_transformation | editing
-Interaction:   roleplay | logic_math | planning_strategy | document_analysis
-Enterprise:    requirement_generation | compliance_pre_assessment | risk_analyst
-               | process_optimization | credit_analyst | meeting_summary
-Engineering:   code | log_troubleshooting | data_analysis | cloud_security
-               | it_specialist | fallback
-```
+**External escalation gets a general-assistant system prompt, never the internal doc-grounding clause**
+(`buildGroundingClause` in `inference.routes.ts`): escalation fires only when retrieval is **empty**, so
+no internal document reaches the external gateway. Leaking the internal "answer only from provided
+material / say `tidak tersedia dalam dokumen yang diberikan`" text into the external system message made
+the Tier-3 model refuse live/open questions (observed: "berapa kurs dollar saat ini" escalated to
+`auto-tier-3` yet answered "tidak tersedia dalam dokumen yang diberikan" — there was no document). The
+clause is now selected per execution path — Tier-1 tool / sovereign-tier-3 external / internal — and the
+external branch tells the model to answer from general knowledge, staying honest about real-time data it
+cannot reach (pointing at authoritative sources instead of inventing a number). Internal and Tier-1-tool
+turns keep their grounding clauses verbatim.
 
-**Expansion history:** Originally 17 skills, expanded to 19 (renames + redistribution), then 24:
-- `document_analysis` added back (it's a cognitive task, not just a medium)
-- `credit_analyst` — credit/financial/SLIK assessment
-- `cloud_security` — cloud security and infrastructure analysis
-- `it_specialist` — IT system and technical documentation analysis
-- `meeting_summary` — meeting transcript summarization with structured JSON output (summary, decisions, action items)
+**What Tahap 1 removed** (old LLM router): 24-skill classifier, `validateSkillInvariants` (10 rules), per-skill prompt refinement + `PromptContract`, complexity scoring, few-shot library, sequential reasoning, deterministic + semantic verification & auto-repair, and the Discovered Roles write-hook/admin tab. `routingReasonCode` + `flags` are the sovereign-tier seam — see [`docs/features/sovereign-tier-router/`](docs/features/sovereign-tier-router/) for the Phase 2 design.
 
-### 4.3 Refinement — Two Modes
+### 4.2 Decision reason codes
 
-| | Turn 1 (no conversationContext) | Turn 2+ (has conversationContext) |
+| reasonCode | Branch | Meaning |
 |---|---|---|
-| Prompt | `SKILL_REFINEMENT_PROMPT` (generic template with role/context/task/intent) | `FOLLOW_UP_REFINEMENT_PROMPT` (task + intent only, no role/context) |
-| LLM input | Original prompt + document context | Original prompt + conversation history |
-| Output JSON | Full `PromptContract` including role + behavioral_instructions + output_format | Minimal: task + intent + ambiguities |
-| Language | Detected language injected via `{{detected_language}}` | Same language detected from input |
+| `auto-fixed-model` | auto | access granted → fixed `config.routing.autoModelId` (private Bedrock) |
+| `auto-tier-1` | auto | restricted (PII or lexicon hit) → private `tier1ModelId \|\| autoModelId`; flag `sovereign-tier-1` |
+| `auto-tier-3` | auto | `tier3-candidate` + empty knowledge retrieval → external OpenAI-compatible gateway; flag `sovereign-tier-3` |
+| `auto-access-denied` | auto | user not whitelisted for the auto model → DEFAULT_MODEL (qwen3-32b), flag set, candidate dropped |
+| `manual-override` | manual | user-picked model honored |
+| `passthrough` | passthrough | Standard Mode / raw prompt, minimal system prompt |
 
-**Role override:** LLM-generated role is always replaced with the static role from `SKILL_TO_ROLE`. The LLM-generated role is still logged and, if `skill === 'fallback'` and the role differs from the static one, appended to `data/fallback-roles.ndjson` for the Discovered Roles admin feature.
+### 4.3 Allowed Models
 
-### 4.4 Routing Policy
-
-```
-resolvePolicy(input):
-  1. Manual state        → honor user's selected model
-  2. Long context        → qwen.qwen3-235b-a22b-2507-v1:0
-  3. Vision + score 1-3  → openai.gpt-oss-120b-1:0
-  4. Vision + score 4-5  → qwen.qwen3-235b-a22b-2507-v1:0
-  5. Text (any score)    → qwen.qwen3-235b-a22b-2507-v1:0
-```
-
-**Key invariant**: qwen3-32b is NEVER used for inference — reserved for routing engine tasks (classification, refinement, scoring, progressive synthesis).
-
-### 4.5 Allowed Models
-
-| Model ID | Vision | Max Output Tokens | Role |
+| Model ID | Vision | Max Output Tokens | Role (Tahap 1) |
 |---|---|---|---|
-| `amazon.nova-lite-v1:0` | Yes | 5,120 | OCR extraction via InvokeModel |
-| `openai.gpt-oss-120b-1:0` | Yes | 16,384 | Vision inference (low-mid complexity) |
-| `qwen.qwen3-235b-a22b-2507-v1:0` | Yes | 8,192 | Primary inference + sequential reasoning |
-| `qwen.qwen3-32b-v1:0` | Yes | 8,192 | Routing engine + progressive synthesis |
-| `anthropic.claude-sonnet-5` | Text-only | 8,192 | Alternate text inference |
-| `zai.glm-5` | Text-only | 8,192 | Alternate text inference |
-| `deepseek.v3.2` | Text-only | 81,920 | Long-output inference (e.g. batch meeting summaries) |
+| `amazon.nova-lite-v1:0` | Yes | 5,120 | OCR Stage 1 via InvokeModel |
+| `openai.gpt-oss-120b-1:0` | Yes | 16,384 | OCR Stage 2 enhance (multipart images/docs) |
+| `qwen.qwen3-235b-a22b-2507-v1:0` | Yes | 8,192 | Auto default + primary single-shot inference |
+| `qwen.qwen3-32b-v1:0` | Yes | 8,192 | Access-denied fallback; session-memory summary/facts (Tier 2/3) |
+| `anthropic.claude-sonnet-5` | Text-only | 8,192 | Alternate manual pick |
+| `zai.glm-5` | Text-only | 8,192 | Alternate manual pick |
+| `deepseek.v3.2` | Text-only | 81,920 | Long-output batch inference (meeting summaries) |
 
-`deepseek.v3.2` was added to support long-output batch inference (up to 81,920 output tokens for meeting transcripts).
+`deepseek.v3.2` supports long-output batch inference (up to 81,920 output tokens). When images are attached, the manual pick must be a vision-capable model (validated at the route layer).
 
-### 4.6 Structured Format Templates
+**External Tier-3 models** (auto-only escalation, e.g. `qwen3.7-flash-2026-07-15`, `MiniMax-M2.7-highspeed`) are **not** in this constant list — they are admin-managed rows in the `tier3_models` table (`GET/PUT /api/v1/admin/tier3`), keyed by the operator's OpenAI-compatible gateway (`TIER3_BASE_URL` / `TIER3_API_KEY` / `TIER3_ENABLED` env). Their per-1M prices live in `src/frontend/pricing-config.json` alongside the Bedrock models.
 
-Some skills have deterministic output format templates via `getDefaultFormatTemplate()`:
+**Tier-3 tools & thinking (config allowlist):** models whose ID matches a prefix in `config.routing.externalTier3.toolModelPrefixes` (env `TIER3_TOOL_MODEL_PREFIXES`, default `deepseek-v4-`) get the ReAct tool registry (`get_current_datetime`) plus optional thinking params (`config.routing.externalTier3.thinkingParams`, env `TIER3_THINKING_PARAMS`, e.g. Qwen `{"enable_thinking":true}` — placement per gateway, confirm by spike first). `external-chat.service.ts` runs a bounded loop (≤3 iterations), streams `reasoning`/`tool_call`, sums tokens into one `metadata`, and persists **only the final non-empty content** — intermediate tool frames and reasoning never touch the DB or audit (see `docs/features/tier3-tools/`).
 
-- **requirement_generation** — natural headings for PRD/BRD
-- **meeting_summary** — structured JSON: `{ summary, decisions, actionItems }`
-- Other structured skills: compliance, risk_analyst, process_optimization, credit_analyst, code, log_troubleshooting, data_analysis, cloud_security, it_specialist, editing, document_analysis, planning_strategy, logic_math
+**Tier-1 internal tool loop (multi-hop RAG, default OFF):** gated by `TIER1_TOOLS_ENABLED` **and** `executedModelId === (TIER1_TOOLS_MODEL_ID || AUTO_MODEL_ID)` on the private-Bedrock JSON-text path — never on sovereign-tier-3 escalation (separate multipart handler too). When on, `generate()` runs an **additive** bounded loop (`runToolLoop`, see `docs/features/tier1-tools/`): ≤ `TIER1_MAX_TOOL_ITERATIONS` tool-capable rounds each carrying `toolConfig.tools=[search_internal_knowledge(query, doc_type?)]`, then one plain forced round with tools stripped. Each tool round streams a `tool_call` SSE, executes locally through the same semantic pgvector search Auto-RAG uses (`knowledge.service.search`; `execTier1Tool` → top `TIER1_TOOL_TOP_K` chunks **in full** — count-capped, never char-truncated), and re-invokes with the `toolResult` appended; text deltas stream live every round; tokens sum into a **single** final `metadata` + `done`. Auto-RAG injection, the sovereign-tier router, and Tier-3 escalation run **unchanged**; per-call audit metadata (`tool`/masked `args`/`duration_ms`/`result_chunks`/`result_size`) lands in `audit_logs.tool_calls_meta` (raw query/result never stored).
 
----
+**Key invariant (Tahap 1):** Auto mode issues ZERO LLM routing calls — no classification, refinement, scoring, or verification. The model is fixed unless the user whitelist denies access. Phase 2 adds only two deterministic gates on top: the restricted-word/PII classifier (`classifySovereignTier`) and the post-retrieval empty-result escalation to Tier 3 — still zero LLM routing calls.
 
-## 5. Sequential Reasoning (Complex Mode)
-
-### Trigger
-
-```
-complexityScore >= 4 AND routingState !== 'manual'
-```
-Not restricted to specific skills — any request with complexity >= 4 qualifies.
-
-### Architecture
-
-```
-SequentialReasoner.execute(input, res)
-  ├─ planner()
-  │   ├─ Calls qwen3-235b (routed model)
-  │   ├─ Structured JSON output: { steps: [{ name, description, systemPrompt }] }
-  │   ├─ Constraints: 2 <= steps <= MAX_SEQUENTIAL_STEPS (default 6)
-  │   ├─ Map-reduce: if document > LARGE_DOCUMENT_THRESHOLD (50K), force Step 1 = Data Cruncher
-  │   ├─ Language preservation: planner prompt tells model to preserve user's language
-  │   └─ On failure or <2 steps → returns null (fallback to single-shot)
-  │
-  ├─ emitPlanSSE()        → event: orchestration_plan
-  │
-  ├─ executor(plan)
-  │   ├─ accumulatedContext initialized with document text (capped at 50K) + conversation history
-  │   ├─ For each step:
-  │   │   ├─ PII mask step input (fail-closed)
-  │   │   ├─ Bedrock ConverseCommand (non-streaming) with language system prompt
-  │   │   ├─ Retry up to STEP_RETRY_COUNT (tiered: same prompt → simplified)
-  │   │   ├─ Skip step if all retries exhausted, emit orchestration_error
-  │   │   ├─ PII mask step output (fail-closed)
-  │   │   ├─ Append to accumulated context
-  │   │   ├─ Audit per step: fire-and-forget with orchestration_group_id
-  │   │   └─ Every PROGRESSIVE_INTERVAL steps → progressiveSynthesis()
-  │   └─ → stepResults[]
-  │
-  ├─ synthesizer()
-  │   ├─ ALWAYS runs, even if all steps fail
-  │   ├─ Success case: formats accumulated context into cohesive narrative
-  │   ├─ Partial case: best-effort response, acknowledges skipped steps
-  │   ├─ Failure case: direct response from original prompt
-  │   ├─ Uses qwen3-235b (routed model) with language system prompt
-  │   └─ → synthesisStatus: 'success' | 'partial' | 'failed'
-  │
-  ├─ progressiveSynthesis()
-  │   ├─ Every PROGRESSIVE_INTERVAL steps (default 3)
-  │   ├─ Quick LLM call via qwen3-32b
-  │   ├─ → event: orchestration_interim { step, total, insight }
-  │
-  └─ → SequentialReasoningResult { assistantText, plan, stepResults, synthesisStatus, orchestrationMeta }
-```
-
-### SSE Events (Orchestration)
-
-| Event | When | Data |
-|---|---|---|
-| `orchestration_plan` | After planner | `{ steps: [{ order, name, description }], reasoning }` |
-| `orchestration_status` | Per step | `{ step, total, name, description, status: 'running'|'completed'|'failed', durationMs? }` |
-| `orchestration_step` | Per step output | `{ step, content }` |
-| `orchestration_interim` | Every N steps | `{ step, total, insight }` |
-| `orchestration_error` | Step failure | `{ step, name, reason }` |
-
-### Configuration
-
-| Env Var | Default | Description |
-|---|---|---|
-| `MAX_SEQUENTIAL_STEPS` | 6 | Max steps in plan (2-10) |
-| `LARGE_DOCUMENT_THRESHOLD` | 50000 | Char threshold for map-reduce trigger |
-| `ORCHESTRATION_TIMEOUT_MS` | 120000 | Max wall-clock for full orchestration |
-| `STEP_RETRY_COUNT` | 2 | Max attempts per step |
-| `PROGRESSIVE_INTERVAL` | 3 | Emit interim synthesis every N steps |
 
 ---
 
-## 6. Session Memory (Three-Tier)
+## 5. Session Memory (Three-Tier)
 
 ### Tier 1: Raw Recent Turns
 - All messages stored in `messages` table per session
@@ -653,66 +562,30 @@ SequentialReasoner.execute(input, res)
 
 ---
 
-## 7. SSE Events Emitted During Inference
+## 6. SSE Events Emitted During Inference
 
 | Event | Timing | Data |
 |---|---|---|
 | `session` | Start of stream | `{ sessionId }` |
-| `routing` | After routing | Full `RoutingMetadataEvent` (skill, flags, complexity, language, timing, raw LLM data) |
-| `orchestration_plan` | After planner (complex mode) | `{ steps: [...], reasoning }` |
-| `orchestration_status` | Per step progress | `{ step, total, name, status }` |
-| `orchestration_step` | Per step output | `{ step, content }` |
-| `orchestration_interim` | Every N steps | `{ step, total, insight }` |
-| `orchestration_error` | Step failure | `{ step, name, reason }` |
+| `routing` | After routing | Trimmed `RoutingMetadataEvent`: routingState, executedModelId, routingReasonCode, modalityFlags, manualOverrideApplied, flags, routingDurationMs, prompt lengths, memory/facts (multipart: OCR model fields) |
+| `embedding` | After knowledge retrieval | `{ inputTokens, chunks: [{ id, title, docType, score, bindingLevel, sourceType }] }` |
 | `delta` | Per token | `{ type: "text", content: "<token>" }` |
-| `metadata` | End of stream | `{ inputTokens, outputTokens }` |
-| `verification` | After generate | `{ passed, violations, checks }` |
-| `semantic_verdict` | After semantic judge | `{ is_correct, missing_elements[] }` |
-| `repair` | After verification/judge failure | `{ text: "<repaired content>" }` |
+| `reasoning` | Tier-3 external (thinking-capable model) | `{ content: "<reasoning token>" }` — forwarded per CoT token; never persisted/logged |
+| `tool_call` | Tier-3 external ReAct round **or** Tier-1 tool round | `{ tools: ["get_current_datetime"] }` / `{ tools: ["search_internal_knowledge"] }` — once per tool round |
+| `metadata` | End of stream | `{ inputTokens, outputTokens }` (Tier-3 external **and** Tier-1 tool loop: summed across iterations; single-shot = one call's usage) |
 | `session_status` | On storage failure | `{ sessionId, is_degraded: true }` |
-| `done` | AFTER verifier+repair | `{}` |
+| `done` | End of stream | `{}` |
 | `error` | On failure | `{ error, message }` |
 
-**Key timing:** `done` is emitted AFTER the verifier + semantic judge + repair block, so repair results arrive before `done`. This fixes the bug where the frontend received `done`, closed the stream, and repair events arrived too late.
+`reasoning` fires only on the external Tier-3 path (see §4.3). `tool_call` fires on the external Tier-3 path **and** on the Tier-1 internal loop (default OFF, §4.3 "Tier-1 internal tool loop") — both additive; existing `delta`/`metadata`/`done`/`error` consumers parse unchanged. On Tier-1 tool turns, `delta`/`metadata`/`done` span the whole loop (tokens summed, one `metadata`/`done` at the end); on non-tool turns the stream is byte-identical to the pre-feature single shot.
+
+**No verification/repair events** — deterministic output verification, the semantic judge, and auto-repair were removed in Tahap 1 along with the LLM router.
 
 **Batch endpoint** does NOT use SSE — returns plain JSON `{ summary, decisions, actionItems, metadata }`.
 
 ---
 
-## 8. Verification & Repair
-
-Two verification layers: deterministic + semantic. Both feed into the same repair pipeline.
-
-### Layer 1: Deterministic (`verifyOutput`)
-- Empty output detection
-- PII placeholder check disabled intentionally (placeholders in output are correct — masker worked)
-- Word count limits from `contract.constraints`
-- Required sections from `contract.format.mustInclude` (language-agnostic)
-- Forbidden content from `contract.format.mustAvoid`
-
-### Layer 2: Semantic (`semanticJudge`)
-- LLM-as-a-judge: calls qwen3-32b (maxTokens=256, temperature=0)
-- Runs for high-stakes skills: `compliance_pre_assessment`, `logic_math`, `code`, `risk_analyst`, `data_analysis`
-- Returns `{ is_correct: boolean, missing_elements: string[] }`
-- Emitted as `event: semantic_verdict` SSE
-
-### Auto-repair (`repairResponse`)
-- When either verification layer finds errors, `repairResponse()` calls Bedrock Converse
-- Original conversation messages preserved; repair prompt targets only violations
-- Repair output → `event: repair` SSE
-
-### Timing
-```
-generate() or sequentialReasoner → done (emitted by generate path only)
-          → verifyOutput() (deterministic)
-          → semanticJudge() + repairResponse() ← runs BEFORE done
-          → emit done (complex mode only — generate path already emitted it)
-          → store, audit, res.end()
-```
-
----
-
-## 9. Document Extraction Pipeline
+## 7. Document Extraction Pipeline
 
 ### Format dispatch
 
@@ -740,7 +613,7 @@ When extraction returns low-confidence text (image-heavy PDFs, PPTX), the two-st
 
 ---
 
-## 10. Two-Stage OCR Pipeline
+## 8. Two-Stage OCR Pipeline
 
 ```
 needsOCR = images.length > 0 || documentBlocks.length > 0
@@ -761,7 +634,7 @@ if needsOCR:
 
 ---
 
-## 11. Gotenberg — Legacy Office Conversion
+## 9. Gotenberg — Legacy Office Conversion
 
 ### Purpose
 Convert binary Office formats (.doc, .ppt) that pure Node.js cannot parse. Also powers the HTML-first PPTX/PDF generation pipeline via Chromium endpoints. Deployed as a separate Cloud Run service.
@@ -800,7 +673,7 @@ JSON slides (JSON fallback)
 
 ---
 
-## 12. PII Masker
+## 10. PII Masker
 
 ### Detected entities
 
@@ -817,12 +690,11 @@ JSON slides (JSON fallback)
 - Indexed placeholders: `[NIK_1]`, `[NIK_2]`, etc.
 - One-way masking — no unmasking step
 - Fail-closed: if masker throws, inference rejected with 500
-- Applied per-step in sequential reasoning (input + output, fail-closed per step)
 - Post-inference PII scan for batch endpoint (defense-in-depth — discards output if PII leaks)
 
 ---
 
-## 13. Database Schema
+## 11. Database Schema
 
 ### `users`
 | Column | Type | Notes |
@@ -885,15 +757,19 @@ JSON slides (JSON fallback)
 | session_state | VARCHAR(16) | |
 | turn_count | INTEGER | |
 | model_pricing_snapshot | JSONB | Pricing at request time |
-| orchestration_meta | JSONB | Sequential reasoning metadata |
-| orchestration_group_id | UUID | Groups per-step audit rows |
-| orchestration_step_order | INTEGER | 0 = planner, 1-N = steps |
-| routing_context | TEXT | Raw classifier routing context snippet |
-| routing_intent | TEXT | Raw routing intent from refinement |
-| session_context | TEXT | Session classifier context for session row |
+| orchestration_meta | JSONB | No longer written (Tahap 1) — column kept, always NULL |
+| orchestration_group_id | UUID | No longer written (Tahap 1) — column kept, always NULL |
+| orchestration_step_order | INTEGER | No longer written (Tahap 1) — column kept, always NULL |
+| routing_context | TEXT | No longer written (Tahap 1) — column kept, always NULL |
+| routing_intent | TEXT | No longer written (Tahap 1) — column kept, always NULL |
+| session_context | TEXT | Session preview (first 120 chars of prompt) |
 | billed_user_id | UUID | [v019] Organizer for cost attribution (bssmom/ghostmeet) |
 | billed_group | VARCHAR(255) | [v019] Org group of billed user |
 | api_key_used | BOOLEAN | [v019] True if X-API-Key auth was used |
+| knowledge_sources | JSONB | [v025] Knowledge chunk IDs backing the response (audit traceability) |
+| embedding_input_tokens | INTEGER | [v028] Retrieval-query embedding tokens per inference turn |
+| api_key_id / application_id | UUID | [v023] Multi-tenant API-key context (nullable; replaces `api_key_used`) |
+| tool_calls_meta | JSONB | [v034] Tier-1 tool-loop audit: `[{tool, args_masked, duration_ms, result_chunks, result_size}]` (args PII-masked at write time; raw never stored) |
 
 ### `feedback_reports`
 | Column | Type | Notes |
@@ -903,7 +779,7 @@ JSON slides (JSON fallback)
 | user_feedback | TEXT | User's complaint text |
 | error_category | VARCHAR(32) | hallucination, missed_context, wrong_tone, formatting_issue, other |
 | final_response | TEXT | The LLM output text |
-| routing_metadata | JSONB | Enriched: complexity, model, userPrompt, routingContext, flags |
+| routing_metadata | JSONB | Enriched: routingState, model, executedModelId, complexityScore (legacy — null in Tahap 1), routingContext |
 | alignment_summary | TEXT | LLM-generated root cause analysis |
 | root_cause_analysis | TEXT | |
 | recommendation | TEXT | |
@@ -912,11 +788,57 @@ JSON slides (JSON fallback)
 | reviewed_at | TIMESTAMPTZ | |
 | created_at | TIMESTAMPTZ | |
 
-**Rich feedback:** When user submits feedback, the frontend captures the user prompt and routing context (skill, complexity, flags, verification status) from the status panel. These are stored in `routing_metadata` and fed to the synthesis LLM for root cause analysis.
+**Rich feedback:** When user submits feedback, the frontend captures the user prompt + routing status panel text, and the backend enriches from `audit_logs` (executed model, routing state). Stored in `routing_metadata` and fed to the synthesis LLM for root cause analysis.
+
+### `knowledge_documents`  (v024, v026, v030)
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| source_file | VARCHAR(512) | Original filename |
+| doc_type | VARCHAR(64) | CHECK: 19 types (SOP, MEMO, REGULATION, PRODUCT_FAQ, HKR, HUK, AUDIT, JUKNIS, BRD, FSD, PKS, UAT, SIT, PROJECT_CHARTER, IT_RD, HCP, CAB, ADR, SAF) |
+| title | VARCHAR(512) | |
+| chunk_index | INTEGER | 0-based within source doc |
+| content | TEXT | Chunk (~1000 tokens) |
+| content_hash | VARCHAR(16) | SHA-256 prefix — dedup key (indexed) |
+| embedding | VECTOR(1536) | Cohere float; IVFflat cosine index (lists=100) |
+| binding_level | VARCHAR(16) | CHECK: regulatory/contractual/procedural/directive/assessment/informational/other |
+| source_type | VARCHAR(16) | CHECK: official / internal / hukumonline |
+| sensitivity | VARCHAR(16) | CHECK: restricted / internal / public |
+| metadata | JSONB | version, effective_date, expiry_date, domain[], jurisdiction[] |
+| created_at | TIMESTAMPTZ | |
+
+### `knowledge_ingestion_jobs`  (v027, v029)
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| source_file | VARCHAR(512) | |
+| status | VARCHAR(16) | processing | completed | failed |
+| chunks_indexed | INTEGER | |
+| error | TEXT | |
+| uploaded_by | VARCHAR(255) | [v029] Uploader identity |
+| doc_type | VARCHAR(64) | [v029] Same CHECK as documents |
+| binding_level / source_type / sensitivity | VARCHAR(16) | [v029] Same CHECKs as documents |
+| created_at / completed_at | TIMESTAMPTZ | |
+
+### `restricted_terms`  (v033)
+| Column | Type | Notes |
+|---|---|---|
+| term | TEXT | PK — stored as written, matched lowercased (case-insensitive substring) |
+| created_at | TIMESTAMPTZ | Default now() |
+
+Admin-managed live lexicon: a substring hit on the masked prompt/doc text forces the request private (Tier 1) — it can never reach the external Tier-3 gateway. Seeded with bank sensitivity terms (`rahasia`, `confidential`, `internal`, `classified`, `rahasia bank`, `data pribadi`).
+
+### `tier3_models`  (v032)
+| Column | Type | Notes |
+|---|---|---|
+| model_id | TEXT | PK — e.g. `qwen3.7-flash-2026-07-15` |
+| is_default | BOOLEAN | Default false (uniqueness enforced in `tier3.service` — admin-only table) |
+| enabled | BOOLEAN | Default true |
+| created_at | TIMESTAMPTZ | Default now() |
 
 ---
 
-## 14. Configuration (Environment Variables)
+## 12. Configuration (Environment Variables)
 
 | Variable | Default | Description |
 |---|---|---|
@@ -932,19 +854,14 @@ JSON slides (JSON fallback)
 | `MAX_HISTORY_TURNS` | 20 | Max turns in sliding window |
 | `SESSION_EXPIRY_HOURS` | 24 | Session TTL |
 | `ROUTING_METADATA_ENABLED` | true | Emit routing SSE event |
-| `ROUTING_LONG_CONTEXT_THRESHOLD` | 8000 | Char threshold for long-context override |
-| `ROUTING_SCORING_TIMEOUT_MS` | 5000 | Complexity scoring timeout |
-| `ROUTING_REFINEMENT_TIMEOUT_MS` | 8000 | Prompt refinement timeout |
-| `ROUTING_CLASSIFIER_TIMEOUT_MS` | 2000 | Classifier timeout |
-| `ROUTING_DEFAULT_FALLBACK_SCORE` | 2 | Default complexity on scoring failure |
+| `AUTO_MODEL_ID` | qwen.qwen3-235b-a22b-2507-v1:0 | Fixed model for Auto mode (Tahap 1 deterministic — zero LLM routing) |
+| `ROUTING_LONG_CONTEXT_THRESHOLD` | 8000 | Legacy (no consumer in Tahap 1) — parsed, unused |
+| `ROUTING_SCORING_TIMEOUT_MS` | 5000 | Legacy (no consumer in Tahap 1) — parsed, unused |
+| `ROUTING_REFINEMENT_TIMEOUT_MS` | 8000 | Legacy (no consumer in Tahap 1) — parsed, unused |
+| `ROUTING_CLASSIFIER_TIMEOUT_MS` | 2000 | Legacy (no consumer in Tahap 1) — parsed, unused |
+| `ROUTING_DEFAULT_FALLBACK_SCORE` | 2 | Legacy (no consumer in Tahap 1) — parsed, unused |
 | `BATCH_MAX_PROMPT_LENGTH` | 262144 | Max prompt length for batch endpoint (256KB) |
-| `GHOSTMEET_API_KEY` | — | API key for M2M batch inference (timingSafeEqual) |
 | `BODY_LIMIT` | 10mb | JSON body parser limit (raised for long prompts) |
-| `MAX_SEQUENTIAL_STEPS` | 6 | Max steps in sequential reasoning plan |
-| `LARGE_DOCUMENT_THRESHOLD` | 50000 | Char threshold for map-reduce trigger |
-| `ORCHESTRATION_TIMEOUT_MS` | 120000 | Max wall-clock for orchestration |
-| `STEP_RETRY_COUNT` | 2 | Max attempts per step before skipping |
-| `PROGRESSIVE_INTERVAL` | 3 | Emit interim synthesis every N steps |
 | `EXTRACTION_LOW_CONFIDENCE_THRESHOLD` | 100 | Chars below which confidence = 'low' |
 | `EXTRACTION_MAX_JSON_DEPTH` | 20 | Max JSON nesting |
 | `EXTRACTION_MAX_HTML_DEPTH` | 100 | Max HTML nesting |
@@ -953,11 +870,30 @@ JSON slides (JSON fallback)
 | `GOTENBERG_URL` | — | Gotenberg service URL |
 | `GOTENBERG_TIMEOUT_MS` | 30000 | Gotenberg conversion timeout |
 | `PPTX_SERVICE_URL` | — | python-pptx microservice URL (internal Cloud Run) |
+| `KNOWLEDGE_EMBEDDING_MODEL` | global.cohere.embed-v4:0 | Embedding model (cross-region Bedrock inference profile) |
+| `EMBEDDING_TIMEOUT_MS` | 2000 | Timeout per embedding call (ms) |
+| `KNOWLEDGE_EMBED_BATCH_SIZE` | 32 | Chunks embedded per Bedrock call during ingestion (≤96) |
+| `EMBEDDING_BATCH_TIMEOUT_MS` | 15000 | Timeout for a batched ingestion embedding call (ms) |
+| `KNOWLEDGE_SEARCH_TIMEOUT_MS` | 2000 | Knowledge retrieval timeout during inference (ms) |
+| `KNOWLEDGE_CHUNK_SIZE` | 1000 | Ingestion chunk size (tokens, ~4 chars/token) |
+| `KNOWLEDGE_CHUNK_OVERLAP` | 100 | Chunk overlap (tokens) |
+| `KNOWLEDGE_TOP_K` | 5 | Max chunks injected into system prompt |
+| `KNOWLEDGE_MIN_SCORE` | 0.4 | Cosine gate — chunks below this are "not covered" (not injected; empty result escalates a candidate to Tier-3). Calibrated: in-domain ≥0.40, out-of-domain ≤0.33 |
+| `TIER3_ENABLED` | false | Enable external Tier-3 escalation (auto-tier-3, auto-only, text-only) |
+| `TIER3_BASE_URL` | — | External OpenAI-compatible gateway base URL (e.g. `https://api.deepseek.com`) |
+| `TIER3_API_KEY` | — | Gateway key — env-only, never written/returned by the app |
+| `TIER3_TOOL_MODEL_PREFIXES` | deepseek-v4- | Comma-separated model prefixes offered ReAct tools + thinking params |
+| `TIER3_THINKING_PARAMS` | {} | JSON extra top-level body params for allowlisted thinking models (e.g. `{"enable_thinking":true}`) |
+| `TIER1_TOOLS_ENABLED` | false | Enable Tier-1 internal tool loop (multi-hop RAG) on the private-Bedrock JSON-text path — **default OFF, zero behavior change** |
+| `TIER1_TOOLS_MODEL_ID` | — | Model allowlisted to receive tools — empty → routed auto model (`qwen3-235b`) |
+| `TIER1_MAX_TOOL_ITERATIONS` | 3 | Max tool-capable rounds (loop = N tool rounds + 1 plain forced final round) |
+| `TIER1_TOOL_TIMEOUT_MS` | 30000 | Per-tool timeout budget (reserved; search self-timeouts at `KNOWLEDGE_SEARCH_TIMEOUT_MS`) |
+| `TIER1_TOOL_TOP_K` | 3 | Tool-result chunk **count** cap — each chunk returned in full, never char-truncated |
 | `MIN_PASSWORD_LENGTH` | 8 | Minimum password length |
 
 ---
 
-## 15. Testing
+## 13. Testing
 
 ### Test runner
 - Vitest with `globals: true`
@@ -968,11 +904,15 @@ JSON slides (JSON fallback)
 - **Pure function tests**: no mocking needed (context-assembly, content-builder, pii-masker)
 - **Route tests**: `vi.mock` for all dependencies
 
-### Test files (26 total)
+### Test files (40 total, 530 tests)
 ```
 tests/unit/
+├── admin-applications.routes.test.ts
 ├── admin.middleware.test.ts
+├── api-key-auth.middleware.test.ts
+├── api-key.service.test.ts
 ├── app.test.ts
+├── application.service.test.ts
 ├── audit.service.test.ts          # + billedUserId/billedGroup/apiKeyUsed params
 ├── auth-google.test.ts
 ├── auth.middleware.test.ts
@@ -984,48 +924,35 @@ tests/unit/
 ├── cost-reporting.routes.test.ts
 ├── cost-reporting.service.test.ts
 ├── document-extractor.test.ts
+├── embedding.service.test.ts      # batch generateEmbeddings (order, [], count/dim mismatch)
+├── external-chat.service.test.ts  # Tier-3 SSE delta/usage/fallback, sanitized errors, plain body
+├── external-chat-tools.test.ts    # ReAct: reasoning echo, tool-call index merge, cap, summed tokens, B1 guard
 ├── file-signature-validator.test.ts
 ├── image-processor.test.ts
 ├── inference-retry.test.ts
 ├── inference.routes.test.ts
 ├── inference.service.test.ts
+├── knowledge.routes.test.ts       # upload 202, metadata extract, list, status
+├── knowledge.service.test.ts      # chunk + hash-dedup + batch-embed index, semantic gate, delete
 ├── models.routes.test.ts
 ├── password-reset.middleware.test.ts
 ├── pii-detection.test.ts
 ├── pii-masker-nama.test.ts
-├── routing-engine.test.ts         # 14 tests (10 invariant rules + baseline)
-├── sequential-reasoning.test.ts   # 16 tests (planner, executor, retry, PII, SSE, audit)
+├── pptx-generator.service.test.ts
+├── restricted-terms.service.test.ts  # restricted-word lexicon CRUD + live-restrict behaviour
+├── routing-engine.test.ts         # 17 tests (sovereign classify + auto/manual/passthrough + access-denied)
 ├── session-memory.test.ts
-└── session.service.test.ts
+├── tier1-tools.service.test.ts    # Tier-1 loop: registry, top-K count-cap, doc_type filter, no-PII-mask, default-OFF anchor
+└── tier3.service.test.ts          # tier3_models default resolution + CRUD
+```
 ```
 
-### Routing Engine Invariant Tests
-| Test | What it verifies |
-|---|---|
-| compliance with legal context | Passes through invariant |
-| compliance without legal context | Demoted to fallback |
-| risk_analyst with risk context | Passes through invariant |
-| risk_analyst without risk context | Demoted to fallback |
-| data_analysis with data context | Passes through invariant |
-| data_analysis without data context | Demoted to fallback |
-| code with ``` blocks | Passes through invariant |
-| code with function keyword | Passes through invariant |
-| code without indicators | Demoted to fallback |
-| process_optimization with context | Passes through invariant |
-| process_optimization without context | Demoted to fallback |
-| credit_analyst with context | Passes through invariant |
-| credit_analyst without context | Demoted to fallback |
-| meeting_summary with meeting context | Passes through invariant |
-| meeting_summary without meeting context | Demoted to fallback |
-| cloud_security with cloud context | Passes through invariant |
-| cloud_security without cloud context | Demoted to fallback |
-| it_specialist with IT context | Passes through invariant |
-| it_specialist without IT context | Demoted to fallback |
-| non-guarded skills unchanged | business_writing, summarization, fallback unchanged |
+### Routing Engine Tests (deterministic)
+`selectAutoModel()`: returns the configured fixed auto model when access is granted (zero LLM calls); falls back to DEFAULT_MODEL + `auto-access-denied` flag when denied. `routeRequest()`: auto → fixed model + raw prompt + `fallback` skill; manual preserves the user's model byte-for-byte; passthrough sets the `passthrough` flag. No LLM routing calls are asserted anywhere.
 
 ---
 
-## 16. Auth Middleware
+## 14. Auth Middleware
 
 ### JWT Bearer (interactive)
 - `authMiddleware` validates JWT Bearer token from `Authorization` header
@@ -1041,7 +968,7 @@ tests/unit/
 
 ---
 
-## 17. Batch Inference Endpoint
+## 15. Batch Inference Endpoint
 
 ### Purpose
 Non-streaming, machine-to-machine inference for bulk processing (GhostMeet → beexexity). Designed for meeting transcript summarization.
@@ -1091,23 +1018,19 @@ Content-Type: application/json
 
 ---
 
-## 18. Important Patterns
+## 16. Important Patterns
 
-- **Unified dispatch**: Single execution path: complexity >= 4 → SequentialReasoner, otherwise → `generate()`. No separate "mode" concept.
-- **Post-classification invariant guard**: `validateSkillInvariants()` runs 10 deterministic checks after the LLM classifier. Demotes impossible skill classifications to `fallback`. Zero LLM cost.
-- **Head+tail document extraction**: Classifier receives first 2000 + last 1000 chars of document, not just first 800. Better classification signal for long documents.
-- **Discovered Roles**: When `skill === 'fallback'` and the refinement model generates a role different from the static "General Purpose Assistant", the role is logged to `data/fallback-roles.ndjson`. The admin dashboard shows a "Discovered Roles" tab with accept/reject/deploy workflow.
-- **Rich feedback**: Feedback submission includes the user's original prompt + routing context (skill, flags, verification status) alongside the error category and response text.
-- **Language-aware sequential reasoning**: Each step and the final synthesis pass `IMPORTANT: Respond in {language}` as a system prompt.
-- **Conditional format enforcement**: System prompt says "CRITICAL FORMAT INSTRUCTION — you MUST follow this" when `output_format` is present, or "respond in plain text" when absent.
+- **Deterministic auto routing (Tahap 1)**: Auto mode = `selectAutoModel()` → one fixed model (`config.routing.autoModelId`, default qwen3-235b). Zero LLM routing calls; skill always `fallback`; raw prompt passed through unchanged.
+- **Single-shot dispatch**: Every request runs a single `generate()` (Bedrock ConverseStream). Sequential reasoning, deterministic/semantic verification, and auto-repair were removed in Tahap 1.
+- **Reason-code seam**: `routingReasonCode` + `flags` on `RoutingDecision` stay populated (`auto-fixed-model`, `auto-access-denied`, `manual-override`, `passthrough`) as the Phase-2 injection point (3-gate Tier-3 router enters at `selectAutoModel`).
+- **Access-denied fallback**: If the user whitelist denies the fixed auto model, routing degrades to `DEFAULT_MODEL` (qwen3-32b) with an `auto-access-denied` flag — never a hard error.
+- **Rich feedback**: Feedback submission includes the user's original prompt + routing status-panel text, enriched server-side from `audit_logs` (model, routing state) for root-cause synthesis.
 - **Indent-aware markdown rendering**: List items track indentation level via a stack, producing proper nested HTML.
-- **Done emission timing**: `event: done` emitted AFTER verifier + semantic judge + repair, so repair results arrive before `done`.
-- **Fail-closed PII**: If masker throws, inference rejected (500). Never sends unmasked data. Applied per-step in sequential reasoning. Post-inference PII scan for batch endpoint.
-- **Graceful degradation**: Routing step failures fall back gracefully. Sequential reasoning falls back to single-shot on planner failure.
+- **Fail-closed PII**: If masker throws, inference rejected (500). Never sends unmasked data. Post-inference PII scan for batch endpoint.
 - **API key auth**: Constant-time comparison via `timingSafeEqual`. Resolves to `ghostmeet` system user.
-- **Passthrough mode (Standard Mode)**: Admin-toggleable global setting that bypasses all routing/refinement/verification. Stored in `app_config` table with in-memory cache. Audit logs record `passthrough=true`. Chat UI shows read-only banner.
+- **Passthrough mode (Standard Mode)**: Admin-toggleable global setting that forces `routingState='passthrough'` — raw prompt, minimal system prompt, `passthrough=true` audit flag. Stored in `app_config` table with in-memory cache. Chat UI shows read-only banner.
 - **Session preview from assistant response**: Session sidebar preview uses first assistant message (not user prompt) — better UX for document uploads where prompt is just "jelaskan dokumen ini".
-- **Markdown format instruction**: Manual/passthrough modes include explicit `FORMAT_INSTRUCTION` with 7 markdown rules in system prompt — guides model to produce clean markdown output.
+- **Markdown format instruction**: The system prompt always appends `FORMAT_INSTRUCTION` (7 explicit markdown rules) — clean markdown output across auto/manual/passthrough.
 - **Emoji heading detection**: Frontend parser treats emoji-prefixed lines (🔹, ✅, etc.) as `<h3>` when the content looks like a title — catches non-standard heading patterns.
 - **List-aware heading closing**: When a `###` heading, `---` HR, or emoji heading appears inside a list context, the list is automatically closed before rendering the heading.
 - **Surrogate pair support**: Emoji detection regex uses the `u` flag for proper Unicode surrogate pair handling (SMP emojis like 🔹, 🏢).
@@ -1115,8 +1038,7 @@ Content-Type: application/json
 - **Sanitized errors**: Bedrock errors sanitized — no ARNs, request IDs, or stack traces.
 - **Pricing snapshots**: Model pricing captured at inference time for historical accuracy.
 - **Billing context**: `billed_user_id`/`billed_group` for per-organizer cost attribution (bssmom/GhostMeet integration).
-- **Follow-up refinement**: Turn 2+ uses `FOLLOW_UP_REFINEMENT_PROMPT` — skips role/context fields, emits minimal task+intent JSON.
-- **OCR→orchestrator injection**: `effectiveDocText` ensures OCR-extracted content reaches sequential reasoning path.
+- **OCR enhancement override**: The multipart needsOCR path overrides the routed model with GPT-OSS 120B (Stage 2 enhance); falls back to the routed model if enhance fails.
 - **File buffer cleanup**: After multipart inference, file buffers explicitly nullified.
 - **Cache-control on HTML**: HTML files served with `Cache-Control: no-cache, no-store, must-revalidate`.
 - **EventEmitter limit**: `EventEmitter.defaultMaxListeners = 50` in `server.ts`.
@@ -1129,3 +1051,54 @@ Content-Type: application/json
 - **Conversation context in file generation**: Frontend collects last 4 user-assistant turns from chat DOM, backend injects them as "KONTEKS PERCAKAPAN SEBELUMNYA" — enables multi-turn drafting before final file generation.
 - **Auto-download + clickable link**: Generated files auto-download AND show a clickable download link in chat. Blob URL kept alive until next generation. File size displayed in MB.
 - **python-pptx service scale-to-zero**: Deployed as separate Cloud Run service with min-instances=0, internal-only ingress, IAM auth. Cold start ~2s acceptable for generation latency.
+- **Knowledge retrieval (Tier 2)**: Every JSON text inference turn embeds the effective prompt (Cohere) and retrieves top-K chunks into the system prompt with a citation rule; 2s self-timeout, any failure degrades to `[]` (inference never blocked).
+- **Knowledge ingestion batching**: content-hash dedup via `content_hash = ANY($1::text[])`, then batch embed (default 32/call, ≤96) — a large PDF indexes in a handful of Cohere calls, not one per chunk.
+- **Relevance-first ordering**: retrieval sorts by cosine distance first; the 7-value `binding_level` CASE (regulatory/contractual first) only breaks distance ties. (Ranking binding before similarity hid the most relevant non-regulatory chunk behind regulatory rows — e.g. the functional-spec answer to "jelaskan aplikasi digivisit" lost to irrelevant FAQ rows — which wrongly emptied retrieval and spurious-escalated in-domain questions to Tier-3.)
+- **Semantic relevance gate (knowledge)**: retrieval is pure semantic — chunks below `KNOWLEDGE_MIN_SCORE` (default 0.4) are dropped, so irrelevant/out-of-corpus queries return `[]` (→ Tier-3 escalation). No keyword fallback: a fallback previously resurrected one broad FAQ chunk for any weak-semantic query via generic word overlap, so retrieval was never empty and escalation never fired.
+- **Tier-3 ReAct loop (allowlisted)**: external models matching `TIER3_TOOL_MODEL_PREFIXES` (default `deepseek-v4-`) get `AVAILABLE_TOOLS` + optional `TIER3_THINKING_PARAMS`. Bounded ≤3 iterations; full assistant frames (content + `reasoning_content` verbatim + `tool_calls`) echo in-memory only; reasoning streamed as `reasoning` SSE but **never persisted/logged**; only the final non-empty content is stored; usage summed → one `metadata`/audit row; B1 empty-content (reasoning burned the budget) → sanitized error, no empty DB row.
+- **Runtime config overrides**: `GET/PUT /api/v1/admin/env` mutates the live `config` singleton for `KNOWLEDGE_MIN_SCORE`, `ROUTING_METADATA_ENABLED`, `TIER3_ENABLED` (admin Config tab, "Env Overrides") — used for knowledge-score backtesting without a redeploy.
+
+---
+
+## 17. Knowledge Layer (Tier 2)
+
+Bank-internal document RAG over pgvector (Cohere Embed v4, 1536-d). Ingested docs are chunked, embedded, and injected into the inference system prompt with citations.
+
+### Retrieval flow (inference — JSON text path)
+1. Embed the effective prompt (`input_type=search_query`).
+2. Cosine top-K over `knowledge_documents` (`<=>`) sorted by distance first, `binding_level` as distance tiebreak.
+3. Rows below `KNOWLEDGE_MIN_SCORE` (default 0.4) dropped — no keyword fallback. Irrelevant/out-of-corpus queries return `[]`.
+4. Empty result → prompt sent unchanged (graceful degradation); on a `tier3-candidate` this empties the retrieval and triggers `auto-tier-3` escalation to the external gateway.
+5. Non-empty → system prompt gets the reference block + citation rule `[Sumber: {title}, {section}]`; SSE `embedding` event emitted.
+6. Audit traceability: `audit_logs.knowledge_sources` (chunk ids) + `embedding_input_tokens` (embed spend).
+
+Self-timeout 2s — inference is never blocked; any failure degrades to `[]`.
+
+### Ingestion (Admin UI / API / CLI)
+- `POST /api/v1/knowledge/documents` — async (202); status tracked in `knowledge_ingestion_jobs`.
+- `POST /api/v1/knowledge/metadata/extract` — qwen3-235b suggests doc_type/binding_level/sensitivity.
+- `GET /api/v1/knowledge/documents` — job list; `GET /documents/:id/status` — poll. Auth: `x-api-key` OR JWT.
+- CLI batch: `npx tsx src/scripts/ingest-knowledge.ts <folder>`.
+- Pipeline: extract → Markdown → chunk (~1000 tokens, 100 overlap) → content-hash dedup → batch embed (32/call) → insert.
+- Classification (migration 030): CHECK-constrained 19 `doc_type` / 7 `binding_level` / 3 `source_type` / 3 `sensitivity` on both `knowledge_documents` and `knowledge_ingestion_jobs`; legacy values normalized.
+
+### Models & cost
+- `global.cohere.embed-v4:0` — cross-region Bedrock inference profile (bare `cohere.embed-v4:0` rejected in ap-southeast-3).
+- Ingestion cost: chunk count × batch calls. Inference cost: 1 query embed per JSON text turn (see §12 `KNOWLEDGE_*` / `EMBEDDING_*`).
+
+### Scope note
+Retrieval is wired on the JSON text-only inference path. The multipart file-upload path (§3.4) does not run knowledge search yet.
+
+## 18. Google Workspace Integration
+
+Users paste Google Docs / Sheets / Slides / Drive file URLs into chat. The URL interceptor (`url-interceptor.service.ts`) runs after model validation and before PII masking: it detects GWS URLs (code-block URLs ignored), fetches content via the user's Drive OAuth token, and replaces the URL with a `[Google {type}: {title}]` placeholder. Doc text and prompt are PII-masked **separately**, then `maskedPrompt + maskedDocumentText` feeds the sovereignty gate — a clean doc routes normally, a doc with PII/restricted lexicon forces `auto-tier-1` (private Bedrock, `sovereign-tier-1`). Extracted content is injected into the system prompt as document context. Every fetch is recorded in `audit_logs.orchestration_meta` (`action: 'gdrive_fetch'`, fileId, mimeType, durationMs).
+
+New env vars (§12): `GOOGLE_DRIVE_CLIENT_ID` (OAuth 2.0 Web Client, distinct from the GIS login `GOOGLE_CLIENT_ID`), `GOOGLE_CLIENT_SECRET`, `GOOGLE_DRIVE_TIMEOUT_MS` (default 10000).
+
+Auth endpoints (all under `/api/v1/auth/google-drive/`): `GET status`, `GET auth` (OAuth URL), `GET callback` (code→token, serves popup postMessage), `DELETE revoke`.
+
+### Accepted risks (documented per design)
+- **No app-level token encryption.** Refresh tokens sit in `user_google_drive_tokens` plaintext; protection relies on GCP Cloud SQL at-rest encryption + IAM. An env-var encryption key shares the same threat model as the DB password — accepted for MVP (see migration 035 comment).
+- **In-memory access-token cache** (Map, TTL 50 min) is per-instance, not distributed — sufficient for Cloud Run's ≤10 instances; each instance may refresh independently.
+- **No Drive rate limiter** — default quota (100 req/100s/user) monitored; add a limiter only if needed.
+- **Zero-trust egress** — every Drive call uses the requesting user's token, never a service account.

@@ -689,6 +689,42 @@
     .assistant-content ol ol { list-style-type: lower-alpha; }
     .assistant-content ol ol ol { list-style-type: lower-roman; }
 
+    /* ── Tier-3 thinking (💭) + tool badge ────────────────────── */
+    .assistant-content .reasoning {
+      margin: 0 0 8px;
+      font-size: 0.8rem;
+      line-height: 1.5;
+      color: var(--text-tertiary);
+    }
+    .assistant-content .reasoning summary {
+      cursor: pointer;
+      user-select: none;
+      color: var(--text-secondary);
+    }
+    .assistant-content .reasoning-body {
+      margin-top: 2px;
+      white-space: pre-wrap;
+      border-left: 2px solid var(--border);
+      padding-left: 8px;
+    }
+    .assistant-content .reasoning .reasoning-sr {
+      position: absolute;
+      width: 1px; height: 1px;
+      overflow: hidden; clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    .assistant-content .tool-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.78rem;
+      padding: 2px 10px;
+      margin-bottom: 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+
     /* ── Enhanced markdown styling ────────────────────────────── */
     .assistant-text-content {
       font-size: 0.925rem;
@@ -706,49 +742,10 @@
     .assistant-text-content h2 { font-size: 1.15rem; }
     .assistant-text-content h3 { font-size: 1rem; color: var(--text-secondary); }
 
-    .assistant-text-content ul {
-      list-style: none;
-      padding-left: 0;
-      margin: 0.5rem 0;
-    }
-        .assistant-text-content ul li {
-      padding-left: 1.25rem;
-      position: relative;
-      margin-bottom: 0;
-      padding-top: 0.4rem;
-      padding-bottom: 0.4rem;
-      font-weight: 400;
-    }
-    .assistant-text-content ul li::before {
-      content: "•";
-      position: absolute;
-      left: 0;
-      color: var(--text-tertiary);
-    }
-
-    .assistant-text-content ol {
-      list-style: none;
-      padding-left: 0;
-      margin: 0.5rem 0;
-    }
-    .assistant-text-content ol:not(:has(> li:only-child)) {
-      counter-reset: item;
-    }
-    .assistant-text-content ol:not(:has(> li:only-child)) > li {
-      counter-increment: item;
-      padding-left: 1.75rem;
-      position: relative;
-      margin-bottom: 0.25rem;
-    }
-    .assistant-text-content ol:not(:has(> li:only-child)) > li::before {
-      content: counter(item) ".";
-      position: absolute;
-      left: 0;
-      font-weight: 500;
-      color: var(--text-secondary);
-      min-width: 1.25rem;
-    }
-
+    /* List markers: native <ul>/<ol> (inherited from .assistant-content below).
+       The old custom ::before "•" markers + CSS counters broke nested lists and
+       made numbering restart — native markers + the renderer's inline padding
+       render cleanly at every depth. */
     .assistant-text-content pre {
       background: var(--bg-primary);
       border: 1px solid var(--border);
@@ -1299,6 +1296,45 @@
       font-size: 0.7rem;
       color: var(--text-tertiary);
     }
+
+    /* ── Google Drive Badge ── */
+    .drive-badge {
+      display: none;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.75rem;
+      margin-top: 0.35rem;
+      font-size: 0.72rem;
+      border-radius: 8px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .drive-badge:hover { border-color: var(--accent); }
+    .drive-badge.visible { display: inline-flex; }
+    .drive-badge.authorized { border-color: #38A169; }
+    .drive-badge .drive-badge-count {
+      background: var(--bg-tertiary);
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 0.65rem;
+    }
+    .drive-badge .drive-badge-cta {
+      color: var(--accent);
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .drive-badge .drive-badge-cta:hover { text-decoration: underline; }
+    .drive-badge.loading { opacity: 0.7; pointer-events: none; }
+    .drive-badge .drive-badge-revoke {
+      font-size: 0.65rem;
+      color: var(--text-tertiary);
+      cursor: pointer;
+    }
+    .drive-badge .drive-badge-revoke:hover { color: var(--accent); }
 
     /* File error */
     .file-error-area {
@@ -1959,6 +1995,13 @@
         <div class="file-preview-area" id="file-preview-area"></div>
         <div class="model-compat-warning" id="model-compat-warning" role="alert">⚠ Selected model does not support image inputs</div>
         <div class="file-error-area" id="file-error-area" role="alert"></div>
+        <div class="drive-badge" id="drive-badge" onclick="handleDriveBadgeClick()">
+          <span class="drive-badge-icon">📄</span>
+          <span class="drive-badge-status">Google Drive</span>
+          <span class="drive-badge-count" id="drive-badge-count"></span>
+          <span class="drive-badge-cta" id="drive-badge-cta">Connect</span>
+          <span class="drive-badge-revoke" id="drive-badge-revoke" style="display:none" onclick="event.stopPropagation(); revokeDriveAccess()">Revoke</span>
+        </div>
         <div class="input-disclaimer">AI can make mistakes. Consider verifying important information.</div>
         <div id="session-id-display" style="font-size:0.65rem;color:var(--text-tertiary);text-align:center;padding:0.25rem 0;display:none">
           <span id="session-id-text"></span>
@@ -1988,6 +2031,11 @@ let isStreaming = false;
 let currentSessionId = null;
 let idrRate = null; // Cached USD → IDR conversion rate
 let currentEmbeddingTokens = 0; // Cohere embedding tokens for the current turn
+
+// ── Google Drive Integration State ──
+let driveAuthorized = false;
+let driveAuthChecked = false;
+const GWS_URL_RE = /https?:\/\/(?:docs|sheets|slides|drive)\.google\.com\/(?:document\/d\/|spreadsheets\/d\/|presentation\/d\/|file\/d\/|open\?id=)([a-zA-Z0-9_-]+)/g;
 
 // ── Chat History Sidebar State ──
 let sessionList = [];                // Array of session objects from API
@@ -2146,7 +2194,14 @@ async function showChatScreen() {
     const select = document.getElementById('model-select');
     select.innerHTML = '';
 
-    // Set qwen3-235b as default model, keep Auto as an option at the end
+    // Auto (deterministic fixed model) is the default selection
+    const autoOpt = document.createElement('option');
+    autoOpt.value = '';
+    autoOpt.textContent = 'Auto';
+    autoOpt.selected = true;
+    select.appendChild(autoOpt);
+
+    // Keep qwen3-235b first among explicit models for quick manual pick
     const defaultModelId = 'qwen.qwen3-235b-a22b-2507-v1:0';
     const sorted = [...data.models].sort((a, b) =>
       a.modelId === defaultModelId ? -1 : b.modelId === defaultModelId ? 1 : 0
@@ -2155,14 +2210,8 @@ async function showChatScreen() {
       const opt = document.createElement('option');
       opt.value = m.modelId;
       opt.textContent = m.displayName;
-      if (m.modelId === defaultModelId) opt.selected = true;
       select.appendChild(opt);
     });
-    // Add Auto as the last option
-    const autoOpt = document.createElement('option');
-    autoOpt.value = '';
-    autoOpt.textContent = 'Auto';
-    select.appendChild(autoOpt);
 
     pricingConfig = { models: {} };
     data.models.forEach(m => {
@@ -2189,6 +2238,9 @@ async function showChatScreen() {
 
   // Fetch passthrough mode status for read-only indicator
   checkPassthroughStatus();
+
+  // Check Google Drive auth status
+  checkDriveAuthStatus();
 
   document.getElementById('prompt-input').focus();
 }
@@ -2268,6 +2320,8 @@ async function handleSend() {
   const input = document.getElementById('prompt-input');
   const prompt = input.value.trim();
   if (!prompt && attachedFiles.length === 0) return;
+  // Prompt carries a Google Workspace URL → show Drive fetch loading state (FR-6)
+  const isGwsPrompt = detectGwsUrls(prompt).length > 0;
 
   // /pptx prefix → generate PPTX file instead of chat
   if (prompt.startsWith('/pptx ')) {
@@ -2323,17 +2377,15 @@ async function handleSend() {
   const emptyState = document.querySelector('.empty-state');
   if (emptyState) emptyState.remove();
 
-  addMessage('user', prompt || '(files attached)');
+  const userMsgEl = addMessage('user', prompt || '(files attached)');
   setStreaming(true);
 
   // Create assistant message placeholder with thinking indicator
   const assistantEl = addMessage('assistant', '');
   const modelLabel = modelId ? getModelDisplayName(modelId) : 'Auto';
   // Status bar — always visible, shows live processing state.
-  // seq-steps and step-status are OUTSIDE the collapsible details.
   assistantEl.querySelector('.assistant-content').innerHTML =
     `<div id="step-status" style="font-size:0.85em;line-height:1.6;margin-bottom:4px;display:flex;align-items:center;gap:6px"><span style="color:var(--accent)">⏳ Initializing...</span></div>
-     <div id="seq-steps" style="margin-bottom:6px;display:none"></div>
      <details id="status-panel" style="font-size:0.85em;color:var(--text-tertiary)">
        <summary style="cursor:pointer;user-select:none;font-weight:500">Detail Proses</summary>
        <div id="tech-details" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);display:none"></div>
@@ -2342,7 +2394,6 @@ async function handleSend() {
   // Scoped references to status panel elements (avoids duplicate ID issue)
   const scopedStepStatus = assistantEl.querySelector('#step-status');
   const scopedTechDetails = assistantEl.querySelector('#tech-details');
-  const scopedSeqSteps = assistantEl.querySelector('#seq-steps');
   const scopedStatusPanel = assistantEl.querySelector('#status-panel');
   let fullText = '';
   let inputTokens = 0;
@@ -2350,13 +2401,39 @@ async function handleSend() {
   let executedModelId = modelId; // track which model actually ran
   let startTime = Date.now();
   let startedGenerating = false;
-  let subAgentTotal = 0;
-  let subAgentDone = 0;
-  let subAgentSpecs = {};
-  window._debugEvents = [];
-  // Sequential reasoning tracking
-  let seqStepTotal = 0;
-  let seqStepCurrent = 0;
+  let reasoningEl = null;   // 💭 thinking block (details) for this assistant turn
+  let toolBadgeEl = null;   // transient tool-running badge
+  let thinkingCleared = false;
+
+  // End the thinking/tool phase: status region reads a final state, block collapses.
+  // SR is never flooded — the region updates only at start and end of reasoning.
+  const endThinkingUi = () => {
+    if (reasoningEl) {
+      const sr = reasoningEl.querySelector('.reasoning-sr');
+      if (sr) sr.textContent = 'Selesai berpikir';
+      reasoningEl.open = false;
+    }
+    if (toolBadgeEl) { toolBadgeEl.remove(); toolBadgeEl = null; }
+  };
+  // Lazily create the 💭 block only once reasoning frames actually arrive.
+  const ensureReasoningEl = () => {
+    if (!reasoningEl) {
+      reasoningEl = document.createElement('details');
+      reasoningEl.className = 'reasoning';
+      const sum = document.createElement('summary');
+      sum.innerHTML = '💭 <span>Model berpikir…</span>';
+      const sr = document.createElement('div');
+      sr.className = 'reasoning-sr';
+      sr.setAttribute('role', 'status');
+      sr.textContent = 'Model sedang berpikir…';
+      const body = document.createElement('div');
+      body.className = 'reasoning-body';
+      reasoningEl.append(sum, sr, body);
+      const contentEl = assistantEl.querySelector('.assistant-text-content');
+      (contentEl || assistantEl.querySelector('.assistant-content')).before(reasoningEl);
+    }
+    return reasoningEl;
+  };
 
   try {
     let res;
@@ -2399,6 +2476,10 @@ async function handleSend() {
         body.sessionId = currentSessionId;
       }
 
+      if (isGwsPrompt && driveAuthorized && scopedStepStatus) {
+        scopedStepStatus.innerHTML = '<span style=\'color:var(--accent)\'>⏳ Mengambil dokumen dari Google Drive...</span>';
+      }
+
       res = await fetch(`${API_BASE}/inference/generate`, {
         method: 'POST',
         headers: {
@@ -2410,8 +2491,23 @@ async function handleSend() {
     }
 
     if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      // Google Drive auth errors (401) — never logout; prompt to connect and auto-retry after auth.
+      if (err.error === 'GOOGLE_DRIVE_NOT_AUTHORIZED' || err.error === 'GOOGLE_DRIVE_TOKEN_REVOKED') {
+        assistantEl.remove();
+        userMsgEl?.remove();
+        setStreaming(false);
+        driveAuthorized = false;
+        driveAuthChecked = true;
+        window._pendingGwsSend = { prompt: prompt || '', sessionId: currentSessionId };
+        addMessage('error', err.error === 'GOOGLE_DRIVE_TOKEN_REVOKED'
+          ? 'Sesi Google berakhir. Hubungkan ulang Google Drive, lalu kirim ulang otomatis.'
+          : 'Google Drive belum terhubung. Hubungkan untuk mengambil dokumen, lalu kirim ulang otomatis.');
+        updateDriveBadge();
+        connectDriveForRetry();
+        return;
+      }
       if (res.status === 401) { forceLogout('Session expired. Please login again.'); return; }
-      const err = await res.json();
       // Handle invalid/expired session errors by clearing state
       if (res.status === 404 || res.status === 410 || err.error === 'SESSION_EXPIRED' || err.error === 'SESSION_NOT_FOUND') {
         currentSessionId = null;
@@ -2434,7 +2530,9 @@ async function handleSend() {
         return;
       }
       assistantEl.remove();
-      addMessage('error', `${err.error}: ${err.message}`);
+      // Drive fetch errors already carry user-friendly Indonesian messages — skip the code prefix.
+      const isDriveErr = typeof err.error === 'string' && err.error.startsWith('GOOGLE_DRIVE_');
+      addMessage('error', isDriveErr ? err.message : `${err.error}: ${err.message}`);
       setStreaming(false);
       return;
     }
@@ -2475,6 +2573,22 @@ async function handleSend() {
             }
             // Throttled progressive render — only re-render the in-progress last line
             _scheduleProgressive(assistantEl);
+            if (!thinkingCleared) { thinkingCleared = true; endThinkingUi(); }
+          } else if (eventType === 'reasoning') {
+            // DeepSeek Tier-3 CoT — collapsible 💭 block; per-token appends are NOT aria-live
+            if (data.content) {
+              ensureReasoningEl().querySelector('.reasoning-body').textContent += data.content;
+            }
+          } else if (eventType === 'tool_call') {
+            if (!toolBadgeEl) {
+              toolBadgeEl = document.createElement('div');
+              toolBadgeEl.className = 'tool-badge';
+              toolBadgeEl.setAttribute('role', 'status');
+              const names = (Array.isArray(data.tools) ? data.tools : []).map(escapeHtml).join(', ');
+              toolBadgeEl.innerHTML = `🔧 Running tool… <strong>${names}</strong>`;
+              const contentEl = assistantEl.querySelector('.assistant-text-content');
+              (contentEl || assistantEl.querySelector('.assistant-content')).before(toolBadgeEl);
+            }
           } else if (eventType === 'session') {
             // Store the session ID from the server
             if (data.sessionId) {
@@ -2505,35 +2619,22 @@ async function handleSend() {
             scopedTechDetails.style.display = 'block';
             // Panel stays collapsed by default — user expands on demand
             const d = [];
-            d.push(`<b>Thought Process:</b> ${data.reasoningSummary || 'auto-routed'}`);
-            d.push(`<hr style="border:0;border-top:1px solid var(--border);margin:4px 0">`);
-            if (data.skill) d.push(`<b>Skill:</b> ${data.skill}`);
             d.push(`<b>Model:</b> ${data.executedModelId || 'unknown'}`);
-            if (data.complexityScore) d.push(`<b>Complexity:</b> ${data.complexityScore}/5 (${data.scoreBand})`);
             if (data.routingReasonCode) d.push(`<b>Reason:</b> ${data.routingReasonCode}`);
             if (data.modalityFlags) {
               const mf = data.modalityFlags;
               d.push(`<b>Modality:</b> ${mf.mixed ? 'mixed' : mf.image ? 'image' : mf.documentText ? 'document+text' : 'text-only'}`);
             }
-            if (data.confidence !== undefined) {
-              d.push(`<b>Confidence:</b> ${(data.confidence * 100).toFixed(0)}%`);
-            }
             if (data.flags && data.flags.length > 0) {
               d.push(`<b>Flags:</b> ${data.flags.join(', ')}`);
             }
-            if (data.routingDurationMs !== undefined || data.classificationDurationMs !== undefined) {
+            if (data.routingDurationMs !== undefined) {
               d.push(`<hr style="border:0;border-top:1px solid var(--border);margin:4px 0">`);
-              d.push(`<b>⏱ Timing:</b>`);
-              if (data.classificationDurationMs !== undefined) d.push(`&nbsp;&nbsp;Classification: ${data.classificationDurationMs}ms`);
-              if (data.refinementDurationMs !== undefined) d.push(`&nbsp;&nbsp;Refinement: ${data.refinementDurationMs}ms`);
-              if (data.scoringDurationMs !== undefined) d.push(`&nbsp;&nbsp;Scoring: ${data.scoringDurationMs}ms`);
-              if (data.routingDurationMs !== undefined) d.push(`&nbsp;&nbsp;<b>Total: ${data.routingDurationMs}ms</b>`);
+              d.push(`<b>⏱ Routing: ${data.routingDurationMs}ms</b>`);
             }
-            if (data.originalPromptLength !== undefined || data.promptLengthAfterRefinement !== undefined) {
+            if (data.originalPromptLength !== undefined) {
               d.push(`<hr style="border:0;border-top:1px solid var(--border);margin:4px 0">`);
-              d.push(`<b>📝 Prompt:</b>`);
-              if (data.originalPromptLength !== undefined) d.push(`&nbsp;&nbsp;Original: ${data.originalPromptLength} chars`);
-              if (data.promptLengthAfterRefinement !== undefined) d.push(`&nbsp;&nbsp;Refined: ${data.promptLengthAfterRefinement} chars`);
+              d.push(`<b>📝 Prompt:</b>&nbsp;&nbsp;Original: ${data.originalPromptLength} chars`);
             }
             if (data.conversationContext) {
               d.push(`<hr style="border:0;border-top:1px solid var(--border);margin:4px 0">`);
@@ -2564,157 +2665,6 @@ async function handleSend() {
             // Store raw routing data for debug toggle
             window._routingRawData = JSON.stringify(data, null, 2);
             } catch (e) { console.error('[ui] Tech details error:', e); }
-          } else if (eventType === 'orchestration_plan') {
-            window._debugEvents.push({ type: 'orchestration_plan', data: JSON.parse(JSON.stringify(data)) });
-            // Sequential reasoning plan received
-            if (!scopedStepStatus) continue;
-
-            // Handle legacy sub-agent format (data.specs)
-            if (data.specs) {
-              subAgentTotal = data.specs.length;
-              subAgentSpecs = {};
-              let html = '<span style=\'color:var(--accent)\'>🧩 Breaking into ' + subAgentTotal + ' sub-agents</span>';
-              for (const spec of data.specs) {
-                subAgentSpecs[spec.agentId] = spec;
-                const name = spec.agentId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                const task = spec.skill.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                html += '<br><span style=\'color:var(--text-tertiary)\'>  • ' + escapeHtml(name) + ': <i>' + escapeHtml(task) + '</i></span>';
-              }
-              scopedStepStatus.innerHTML = html;
-            }
-
-            // Handle new sequential reasoning format (data.steps)
-            if (data.steps && scopedSeqSteps) {
-              if (scopedTechDetails) {
-                scopedTechDetails.style.display = 'block';
-                let planHtml = '<hr style="border:0;border-top:1px solid var(--border);margin:4px 0"><b>🧩 Orchestration Plan:</b>';
-                if (data.reasoning) planHtml += '<br><span style="font-size:0.85em;color:var(--text-tertiary)">' + escapeHtml(data.reasoning) + '</span>';
-                for (const s of data.steps) {
-                  planHtml += '<br>&nbsp;&nbsp;<b>Step ' + s.order + ':</b> ' + escapeHtml(s.name) + ' — <span style="color:var(--text-tertiary);font-size:0.85em">' + escapeHtml(s.description) + '</span>';
-                }
-                scopedTechDetails.innerHTML += planHtml;
-              }
-              seqStepTotal = data.steps.length;
-              seqStepCurrent = 0;
-              scopedSeqSteps.style.display = 'flex';
-              scopedSeqSteps.style.flexDirection = 'column';
-              scopedSeqSteps.style.gap = '2px';
-              scopedStepStatus.innerHTML = '<span style=\'color:var(--accent)\'>🧠 Menyusun ' + seqStepTotal + ' langkah pemrosesan</span>';
-              let stepsHtml = '<div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:4px">Progress: 0 / ' + seqStepTotal + ' langkah</div>';
-              for (const s of data.steps) {
-                stepsHtml += '<div class="seq-step" data-step="' + s.order + '" style="display:flex;align-items:flex-start;gap:6px;margin:1px 0;font-size:0.85em;opacity:0.5;padding:2px 4px;border-radius:4px">' +
-                  '<span class="seq-step-icon" style="width:18px;text-align:center;flex-shrink:0">○</span>' +
-                  '<div style="flex:1;min-width:0">' +
-                    '<div class="seq-step-name" style="font-weight:500;color:var(--text-primary)">' + escapeHtml(s.name) + '</div>' +
-                    '<div class="seq-step-desc" style="font-size:0.8em;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(s.description) + '</div>' +
-                  '</div>' +
-                  '<span class="seq-step-duration" style="flex-shrink:0;font-size:0.75em;color:var(--text-tertiary)"></span>' +
-                '</div>';
-              }
-              scopedSeqSteps.innerHTML = stepsHtml;
-            }
-          } else if (eventType === 'orchestration_status') {
-            // Sequential reasoning step progress
-            if (!scopedSeqSteps) continue;
-            seqStepCurrent = data.step;
-            // Update progress line
-            const progressDiv = scopedSeqSteps.querySelector('div:first-child');
-            if (progressDiv && seqStepTotal > 0) {
-              progressDiv.textContent = 'Progress: ' + seqStepCurrent + ' / ' + seqStepTotal + ' langkah';
-            }
-            const stepEl = scopedSeqSteps.querySelector('.seq-step[data-step="' + data.step + '"]');
-            if (stepEl) {
-              const icon = stepEl.querySelector('.seq-step-icon');
-              if (icon) {
-                if (data.status === 'running') {
-                  icon.textContent = '⏳';
-                  stepEl.style.opacity = '1';
-                  stepEl.style.background = 'var(--bg-tertiary)';
-                  if (scopedStepStatus) {
-                    scopedStepStatus.innerHTML = '<span style=\'color:var(--accent);font-weight:600\'>⏳ Langkah ' + data.step + '/' + seqStepTotal + ': ' + escapeHtml(data.description || data.name) + '</span>';
-                  }
-                } else if (data.status === 'completed') {
-                  icon.textContent = '✅';
-                  stepEl.style.opacity = '0.6';
-                  stepEl.style.background = 'transparent';
-                  if (data.durationMs) {
-                    const durEl = stepEl.querySelector('.seq-step-duration');
-                    if (durEl) durEl.textContent = (data.durationMs / 1000).toFixed(1) + 's';
-                  }
-                } else if (data.status === 'failed') {
-                  icon.textContent = '❌';
-                  stepEl.style.opacity = '0.6';
-                  stepEl.style.background = 'transparent';
-                }
-              }
-            }
-            if (scopedStepStatus && data.status === 'running' && !data.step) {
-              scopedStepStatus.innerHTML = '<span style=\'color:var(--accent);font-weight:600\'>🔍 ' + escapeHtml(data.description || data.name) + '</span>';
-            }
-          } else if (eventType === 'orchestration_interim') {
-            window._debugEvents.push({ type: 'orchestration_interim', data: JSON.parse(JSON.stringify(data)) });
-            // Progressive synthesis - interim insights
-            if (scopedTechDetails && data.insight) {
-              scopedTechDetails.style.display = 'block';
-              scopedTechDetails.innerHTML += '<hr style="border:0;border-top:1px solid var(--border);margin:4px 0"><b>📊 Interim (' + data.step + '/' + data.total + '):</b><br><span style="font-size:0.85em;color:var(--text-tertiary)">' + escapeHtml(data.insight) + '</span>';
-            }
-            if (scopedStepStatus && data.insight) {
-              const existing = scopedStepStatus.querySelector('.interim-insight');
-              if (existing) existing.remove();
-              const div = document.createElement('div');
-              div.className = 'interim-insight';
-              div.style.cssText = 'margin-top:6px;padding:6px 8px;background:var(--bg-tertiary);border-radius:8px;font-size:0.85em;color:var(--text-secondary);border-left:2px solid var(--accent)';
-              div.innerHTML = '<b style="color:var(--text-primary)">📊 Interim (' + data.step + '/' + data.total + '):</b><br>' + escapeHtml(data.insight);
-              scopedStepStatus.appendChild(div);
-            }
-          } else if (eventType === 'orchestration_error') {
-            window._debugEvents.push({ type: 'orchestration_error', data: JSON.parse(JSON.stringify(data)) });
-            // Step failure
-            if (scopedTechDetails) {
-              scopedTechDetails.style.display = 'block';
-              scopedTechDetails.innerHTML += '<hr style="border:0;border-top:1px solid var(--border);margin:4px 0"><b>⚠️ Step ' + data.step + ' Failed:</b> ' + escapeHtml(data.name) + ' — <span style="color:var(--text-tertiary)">' + escapeHtml(data.reason || 'unknown') + '</span>';
-            }
-            if (scopedSeqSteps) {
-              const stepEl = scopedSeqSteps.querySelector('.seq-step[data-step="' + data.step + '"]');
-              if (stepEl) {
-                const icon = stepEl.querySelector('.seq-step-icon');
-                if (icon) icon.textContent = '⚠️';
-                stepEl.style.opacity = '0.6';
-                if (data.reason) stepEl.title = data.reason;
-              }
-            }
-            if (scopedStepStatus) {
-              scopedStepStatus.innerHTML += '<br><span style=\'color:#e6a817\'>⚠️ ' + escapeHtml(data.name) + ' — ' + escapeHtml(data.reason || 'failed') + '</span>';
-            }
-          } else if (eventType === 'orchestration_step') {
-            window._debugEvents.push({ type: 'orchestration_step', data: JSON.parse(JSON.stringify(data)) });
-            // Per-step output — log to tech-details
-            if (scopedTechDetails) {
-              scopedTechDetails.style.display = 'block';
-              const preview = data.content ? (data.content.length > 200 ? data.content.slice(0, 200) + '...' : data.content) : '';
-              scopedTechDetails.innerHTML += '<hr style="border:0;border-top:1px solid var(--border);margin:4px 0"><b>📝 Step ' + data.step + ' Output:</b><br><span style="font-size:0.85em;color:var(--text-tertiary)">' + escapeHtml(preview) + '</span>';
-            }
-          } else if (eventType === 'orchestration_status') {
-            window._debugEvents.push({ type: 'orchestration_status', data: JSON.parse(JSON.stringify(data)) });
-            // Sequential reasoning step progress — log to tech-details
-            if (scopedTechDetails) {
-              scopedTechDetails.style.display = 'block';
-              const icon = data.status === 'running' ? '⏳' : data.status === 'completed' ? '✅' : '❌';
-              scopedTechDetails.innerHTML += '<hr style="border:0;border-top:1px solid var(--border);margin:4px 0"><span><b>' + icon + ' Step ' + data.step + '/' + data.total + ':</b> ' + escapeHtml(data.name || data.description || '') + (data.durationMs ? ' (' + (data.durationMs / 1000).toFixed(1) + 's)' : '') + ' <span style="color:var(--text-tertiary);font-size:0.85em">[' + data.status + ']</span></span>';
-            }
-            if (!scopedSeqSteps) continue;
-            // Legacy sub-agent progress (backward compat)
-            if (data.status === 'done' || data.status === 'failed') {
-              subAgentDone++;
-              const icon = data.status === 'done' ? '✅' : '❌';
-              const stepStatus = document.getElementById('step-status');
-              if (stepStatus) {
-                const spec = subAgentSpecs[data.agentId];
-                const task = spec ? spec.skill.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
-                const taskSuffix = task ? ' (' + escapeHtml(task) + ')' : '';
-                scopedStepStatus.innerHTML += '<br><span style=\'color:var(--text-tertiary)\'>' + icon + ' ' + escapeHtml(data.agentId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())) + taskSuffix + ' (' + subAgentDone + '/' + subAgentTotal + ')</span>';
-              }
-            }
           } else if (eventType === 'synthesis_delta') {
             // Synthesis streaming — treat same as delta for rendering
             if (data.content) {
@@ -2755,6 +2705,7 @@ async function handleSend() {
             // Inference complete — final full render with proper markdown
             if (_progressiveRaf) { cancelAnimationFrame(_progressiveRaf); _progressiveRaf = 0; }
             _progressivePrev = '';
+            if (!thinkingCleared) { thinkingCleared = true; endThinkingUi(); }
             try { const contentEl = assistantEl.querySelector('.assistant-text-content'); if (contentEl) { contentEl.innerHTML = formatMessage(fullText); buildToc(contentEl); } } catch (e) { console.error('[ui] Render error:', e); }
             if (scopedStepStatus) {
               const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -3104,7 +3055,8 @@ function formatMarkdown(text) {
   let codeBlockLang = '';
   let codeBlockContent = '';
   let listStack = []; // [{ type: 'ul'|'ol', indent: number }] for nesting
-  
+  let listPendingBreak = false; // blank line seen while a list is open
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     
@@ -3215,11 +3167,19 @@ function formatMarkdown(text) {
     }
 
     if (listStack.length > 0 && !isUnorderedItem && !isOrderedItem && line.trim() !== '') {
-      // Append non-list line as continuation inside current <li>.
-      // Without this, LLM multi-line items close &lt;ol&gt; prematurely
-      // and every item starts a new list at 1.
-      html += '<div style="margin:0 0 0.5rem 1.5rem">' + inlineFormat(line) + '</div>';
-      continue;
+      if (!listPendingBreak) {
+        // Bare line right after a list item (no blank gap) — treat as a wrapped
+        // continuation of that item so multi-line items stay in one <li>.
+        html += '<div style="margin:0 0 0.5rem 1.5rem">' + inlineFormat(line) + '</div>';
+        continue;
+      }
+      // A blank line intervened — this is a real paragraph, not a continuation.
+      // Close the open list so the paragraph is not glued inside the last <li>.
+      while (listStack.length > 0) {
+        const popped = listStack.pop();
+        html += '</li></' + popped.type + '>';
+      }
+      listPendingBreak = false;
     }
 
     // Emoji/symbol-prefixed headings: 🔹 1. Ringkasan, ✅ Kesimpulan, 🟩 Langkah, etc.
@@ -3262,8 +3222,20 @@ function formatMarkdown(text) {
         html += '<ul style="margin: 0.25rem 0; padding-left: 1.5rem;">';
         listStack.push({ type: 'ul', indent });
       } else if (listStack[listStack.length - 1].indent === indent) {
-        html += '</li>';
+        if (listStack[listStack.length - 1].type !== 'ul') {
+          // Same indent, different list type (e.g. "1." then "-") — close the old
+          // list and start fresh instead of adding a bullet as a numbered <li>.
+          while (listStack.length > 0) {
+            const popped = listStack.pop();
+            html += '</li></' + popped.type + '>';
+          }
+          html += '<ul style="margin: 0.25rem 0; padding-left: 1.5rem;">';
+          listStack.push({ type: 'ul', indent });
+        } else {
+          html += '</li>';
+        }
       }
+      listPendingBreak = false;
       html += `<li style="margin: 0.25rem 0;">${inlineFormat(itemContent)}`;
       continue;
     }
@@ -3282,8 +3254,18 @@ function formatMarkdown(text) {
         html += '<ol style="margin: 0.25rem 0; padding-left: 1.5rem;">';
         listStack.push({ type: 'ol', indent });
       } else if (listStack[listStack.length - 1].indent === indent) {
-        html += '</li>';
+        if (listStack[listStack.length - 1].type !== 'ol') {
+          while (listStack.length > 0) {
+            const popped = listStack.pop();
+            html += '</li></' + popped.type + '>';
+          }
+          html += '<ol style="margin: 0.25rem 0; padding-left: 1.5rem;">';
+          listStack.push({ type: 'ol', indent });
+        } else {
+          html += '</li>';
+        }
       }
+      listPendingBreak = false;
       html += `<li style="margin: 0.25rem 0;">${inlineFormat(itemContent)}`;
       continue;
     }
@@ -3301,6 +3283,7 @@ function formatMarkdown(text) {
       const isNextBreak = /^#{1,6}(?:\s|$)/.test(nextLine)        // ### heading
         || /^(---|\*\*\*|___)\s*$/.test(nextLine.trim())          // HR
         || /^([^\x00-\x7F])\s*(.+)$/u.test(nextLine);             // emoji heading
+      if (listStack.length > 0) listPendingBreak = true; // paragraph after this gap must close the list
       if (!isNextBreak) {
         html += '<div style="height:0.15rem"></div>';
       }
@@ -3356,7 +3339,10 @@ function formatMarkdown(text) {
 
 // Inline markdown formatting
 function inlineFormat(text) {
-  return text
+  // Escape first (single choke point) so raw HTML from model/doc content can
+  // never reach innerHTML as tags — see /audit DOM-XSS fix.
+  let safe = escapeHtml(text);
+  safe = safe
     // Bold + italic
     .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
     // Bold
@@ -3365,10 +3351,17 @@ function inlineFormat(text) {
     .replace(/(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g, '<em>$1</em>')
     // Inline code
     .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color: var(--accent);">$1</a>')
+    // Links — only safe schemes become <a>; javascript:/data: render as plain text
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => {
+      const scheme = (url.match(/^[a-z][a-z0-9+.-]*:/i) || [''])[0].toLowerCase();
+      if (scheme && scheme !== 'http:' && scheme !== 'https:' && scheme !== 'mailto:') {
+        return m; // unsafe URL → keep literal (already escaped), no clickable link
+      }
+      return '<a href="' + url + '" target="_blank" rel="noopener noreferrer" style="color: var(--accent);">' + label + '</a>';
+    })
     // Strikethrough
     .replace(/~~(.*?)~~/g, '<del>$1</del>');
+  return safe;
 }
 
 /** Copy code block content to clipboard. */
@@ -3403,17 +3396,7 @@ function toggleRawData() {
   let rd = null;
   try { rd = JSON.parse(window._routingRawData || 'null'); } catch {}
   if (rd) {
-    if (rd._classificationPrompt || rd._classificationRaw) {
-      p.push('\n=== LLM CALL 1: unifiedClassifyAndScore (qwen3-32b) ===');
-      if (rd._classificationPrompt) { p.push('--- PROMPT ---'); p.push(rd._classificationPrompt); }
-      if (rd._classificationRaw) { p.push('--- RESPONSE ---'); p.push(rd._classificationRaw); }
-    }
-    if (rd._refinementPrompt || rd._refinementRaw) {
-      p.push('\n=== LLM CALL 2: refinePrompt (qwen3-32b) ===');
-      if (rd._refinementPrompt) { p.push('--- PROMPT ---'); p.push(rd._refinementPrompt); }
-      if (rd._refinementRaw) { p.push('--- RESPONSE ---'); p.push(rd._refinementRaw); }
-    }
-    const { _classificationPrompt, _classificationRaw, _refinementPrompt, _refinementRaw, ...rest } = rd;
+    const rest = rd;
     p.push('\n=== ROUTING DECISION (all fields) ===');
     p.push(JSON.stringify(rest, null, 2));
   }
@@ -3433,20 +3416,11 @@ function toggleRawData() {
     }
   }
 
-  if (window._debugEvents && window._debugEvents.length > 0) {
-    p.push('\n=== ORCHESTRATION EVENTS (' + window._debugEvents.length + ') ===');
-    for (const evt of window._debugEvents) {
-      p.push('\n--- ' + evt.type + ' ---');
-      p.push(JSON.stringify(evt.data, null, 2));
-    }
-  }
 
   el.textContent = p.join('\n') || 'No routing data';
   el.style.display = 'block';
 }
 
-// Debug: buffer for raw orchestration events
-window._debugEvents = [];
 
 function openFeedbackModal(messageEl) {
   if (!messageEl) messageEl = document.querySelector('.message.assistant:last-child');
@@ -3645,6 +3619,117 @@ function formatLine(text) {
   return `<p>${formatMarkdownInline(trimmed)}</p>`;
 }
 
+
+// ── Google Drive Integration ──
+
+function detectGwsUrls(text) {
+  GWS_URL_RE.lastIndex = 0;
+  const matches = [];
+  let m;
+  while ((m = GWS_URL_RE.exec(text)) !== null) matches.push(m[1]);
+  return matches;
+}
+
+function updateDriveBadge() {
+  const badge = document.getElementById('drive-badge');
+  const cta = document.getElementById('drive-badge-cta');
+  const revoke = document.getElementById('drive-badge-revoke');
+  const countEl = document.getElementById('drive-badge-count');
+  if (!badge) return;
+  const text = document.getElementById('prompt-input').value;
+  const matches = detectGwsUrls(text);
+  if (matches.length > 0) {
+    badge.classList.add('visible');
+    countEl.textContent = matches.length + ' doc' + (matches.length > 1 ? 's' : '');
+    if (!driveAuthChecked) checkDriveAuthStatus();
+    if (driveAuthorized) {
+      badge.classList.add('authorized');
+      cta.textContent = 'Connected ✓';
+      cta.style.display = 'none';
+      revoke.style.display = 'inline';
+    } else {
+      badge.classList.remove('authorized');
+      cta.textContent = 'Connect';
+      cta.style.display = 'inline';
+      revoke.style.display = 'none';
+    }
+  } else {
+    badge.classList.remove('visible');
+  }
+}
+
+async function checkDriveAuthStatus() {
+  driveAuthChecked = true;
+  try {
+    const res = await fetch(`${API_BASE}/auth/google-drive/status`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    driveAuthorized = res.ok && (await res.json()).authorized;
+    updateDriveBadge();
+  } catch { driveAuthorized = false; }
+}
+
+function handleDriveBadgeClick() {
+  if (!driveAuthorized) {
+    const badge = document.getElementById('drive-badge');
+    badge.classList.add('loading');
+    connectDriveForRetry().finally(() => badge.classList.remove('loading'));
+  }
+}
+
+/** Open the Google Drive OAuth popup (used by badge click and post-401 auto-reconnect). */
+async function connectDriveForRetry() {
+  try {
+    const res = await fetch(`${API_BASE}/auth/google-drive/auth`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (!data.authUrl) throw new Error('No auth URL');
+    const w = 600, h = 700;
+    window.open(data.authUrl, 'google-drive-auth',
+      `width=${w},height=${h},left=${(screen.width-w)/2},top=${(screen.height-h)/2},popup=1`);
+  } catch {
+    showToast('Gagal membuka halaman otorisasi Google Drive');
+  }
+}
+
+async function revokeDriveAccess() {
+  try {
+    const res = await fetch(`${API_BASE}/auth/google-drive/revoke`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Revoke failed');
+    driveAuthorized = false;
+    driveAuthChecked = true;
+    updateDriveBadge();
+    showToast('Google Drive access revoked');
+  } catch { showToast('Gagal mencabut akses Google Drive'); }
+}
+
+// Listen for OAuth popup postMessage
+window.addEventListener('message', (e) => {
+  if (e.data?.type === 'gd_auth_complete') {
+    driveAuthorized = true;
+    driveAuthChecked = true;
+    const badge = document.getElementById('drive-badge');
+    if (badge) {
+      badge.classList.remove('loading');
+      updateDriveBadge();
+    }
+    showToast('Google Drive berhasil dihubungkan');
+    // Auto-retry the request that hit GOOGLE_DRIVE_NOT_AUTHORIZED/TOKEN_REVOKED (FR-6)
+    if (window._pendingGwsSend) {
+      const s = window._pendingGwsSend;
+      window._pendingGwsSend = null;
+      const input = document.getElementById('prompt-input');
+      if (input && s.prompt) {
+        input.value = s.prompt;
+        if (!isStreaming) handleSend();
+      }
+    }
+  }
+});
 
 // --- Cost Calculation ---
 function calculateCost(modelId, inputTokens, outputTokens) {
@@ -4067,6 +4152,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ta.addEventListener('input', () => {
     ta.style.height = 'auto';
     ta.style.height = ta.scrollHeight + 'px';
+    updateDriveBadge();
   });
 
   // --- Drag and Drop Setup ---

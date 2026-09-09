@@ -51,9 +51,7 @@ describe('AuditService', () => {
           null, // totalFileSize is undefined → null
           false, // isMultimodal is undefined → false
           null, // routingState is undefined → null
-          null, // complexityScore is undefined → null
           null, // routingReasonCode is undefined → null
-          null, // reasoningSummary is undefined → null
           null, // executedModelId is undefined → null
           false, // manualOverrideApplied is undefined → false
           null, // modalityFlags is undefined → null
@@ -65,11 +63,6 @@ describe('AuditService', () => {
           null, // sessionState is undefined → null
           null, // turnCount is undefined → null
           JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }), // modelPricingSnapshot for qwen3-32b
-          null, // orchestrationMeta is undefined → null
-          null, // orchestrationGroupId is undefined → null
-          null, // orchestrationStepOrder is undefined → null
-          null, // routingContext
-          null, // routingIntent
           null, // sessionContext
           null, // billedUserId
           null, // billedGroup
@@ -79,6 +72,8 @@ describe('AuditService', () => {
           false, // passthrough
           null, // knowledgeSourceIds (not provided → null)
           null, // embeddingInputTokens (not provided → null)
+          null, // tool_calls_meta (not provided → null)
+          null, // orchestrationMeta (not provided → null)
         ],
       );
     });
@@ -168,7 +163,7 @@ describe('AuditService', () => {
 
       // Verify the params array only contains the expected metadata fields
       const params = mockedQuery.mock.calls[0][1] as unknown[];
-      expect(params).toHaveLength(42);
+      expect(params).toHaveLength(37);
       expect(params).toEqual([
         validEntry.timestamp,
         validEntry.userId,
@@ -184,9 +179,7 @@ describe('AuditService', () => {
         null,
         false,
         null, // routingState
-        null, // complexityScore
         null, // routingReasonCode
-        null, // reasoningSummary
         null, // executedModelId
         false, // manualOverrideApplied
         null, // modalityFlags
@@ -198,11 +191,6 @@ describe('AuditService', () => {
         null, // sessionState
         null, // turnCount
         JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }), // modelPricingSnapshot
-          null, // orchestrationMeta is undefined → null
-        null, // orchestrationGroupId
-        null, // orchestrationStepOrder
-        null, // routingContext
-        null, // routingIntent
         null, // sessionContext
         null, // billedUserId
         null, // billedGroup
@@ -212,6 +200,8 @@ describe('AuditService', () => {
         false, // passthrough
         null, // knowledgeSourceIds (not provided → null)
         null, // embeddingInputTokens (not provided → null)
+        null, // tool_calls_meta (not provided → null)
+        null, // orchestrationMeta (not provided → null)
       ]);
     });
 
@@ -241,16 +231,14 @@ describe('AuditService', () => {
       await auditService.log(entryWithSession);
 
       const params = mockedQuery.mock.calls[0][1] as unknown[];
-      // Session fields are at indices 13-16
-      expect(params[21]).toBe('660e8400-e29b-41d4-a716-446655440001'); // sessionId
-      expect(params[22]).toBe(5); // replayedMessageCount
-      expect(params[23]).toBe(true); // contextTruncated
-      expect(params[24]).toBe(false); // contextSummarized
-      // Session continuity fields at indices 17-18
-      expect(params[25]).toBe('active'); // sessionState
-      expect(params[26]).toBe(3); // turnCount
-      // Pricing snapshot at index 19 (from actual pricing-config.json)
-      expect(params[27]).toBe(JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }));
+      expect(params[19]).toBe('660e8400-e29b-41d4-a716-446655440001'); // sessionId
+      expect(params[20]).toBe(5); // replayedMessageCount
+      expect(params[21]).toBe(true); // contextTruncated
+      expect(params[22]).toBe(false); // contextSummarized
+      expect(params[23]).toBe('active'); // sessionState
+      expect(params[24]).toBe(3); // turnCount
+      // Pricing snapshot (from actual pricing-config.json)
+      expect(params[25]).toBe(JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }));
     });
 
     it('should not include any raw message content in audit fields', async () => {
@@ -280,18 +268,18 @@ describe('AuditService', () => {
       // Verify params contain only IDs, counts, and booleans — no strings that could be content
       const params = mockedQuery.mock.calls[0][1] as unknown[];
       // sessionId is a UUID string, not content
-      expect(typeof params[21]).toBe('string');
-      expect((params[21] as string).match(/^[0-9a-f-]+$/)).toBeTruthy();
+      expect(typeof params[19]).toBe('string');
+      expect((params[19] as string).match(/^[0-9a-f-]+$/)).toBeTruthy();
       // replayedMessageCount is a number
-      expect(typeof params[22]).toBe('number');
+      expect(typeof params[20]).toBe('number');
       // contextTruncated and contextSummarized are booleans
-      expect(typeof params[23]).toBe('boolean');
-      expect(typeof params[24]).toBe('boolean');
+      expect(typeof params[21]).toBe('boolean');
+      expect(typeof params[22]).toBe('boolean');
       // sessionState is null (not provided), turnCount is null (not provided)
-      expect(params[25]).toBeNull();
-      expect(params[26]).toBeNull();
+      expect(params[23]).toBeNull();
+      expect(params[24]).toBeNull();
       // modelPricingSnapshot (from actual pricing-config.json for qwen3-32b)
-      expect(params[27]).toBe(JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }));
+      expect(params[25]).toBe(JSON.stringify({ inputPricePer1MTokens: 0.16, outputPricePer1MTokens: 0.62, embeddingPricePer1MTokens: 0.12 }));
     });
   });
 });

@@ -12,15 +12,29 @@
     @import url("https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap");
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
-      --bg-primary: #0f0f0f; --bg-secondary: #1a1a1a; --bg-tertiary: #262626;
-      --text-primary: #f5f5f5; --text-secondary: #a0a0a0; --text-tertiary: #8a8a8a;
-      --accent: #b5e4f7; --accent-hover: #9bd0e6; --border: #2a2a2a;
+      --bg-primary: #0f0f0f; --bg-secondary: #161616; --bg-tertiary: #232323;
+      --text-primary: #f5f5f5; --text-secondary: #a8a8a8; --text-tertiary: #909090;
+      --accent: #b5e4f7; --accent-hover: #9bd0e6; --accent-ink: #04242f;
+      --accent-soft: rgba(181, 228, 247, 0.09); --border: #2a2a2a;
       --success: #4caf50; --error: #f44336; --warning: #ff9800;
+      --ok: #4ade80; --ok-bg: rgba(74, 222, 128, 0.13);
+      --warn: #fbbf24; --warn-bg: rgba(251, 191, 36, 0.13);
+      --err: #f87171; --err-bg: rgba(248, 113, 113, 0.13);
+      --info: #7cc3ff; --info-bg: rgba(56, 189, 248, 0.13);
+      --neutral-bg: rgba(255, 255, 255, 0.06);
+      --radius-sm: 8px; --radius-md: 14px;
+      --shadow-1: 0 12px 32px -18px rgba(0, 0, 0, 0.55);
     }
     [data-theme="light"] {
       --bg-primary: #f5f5f5; --bg-secondary: #ffffff; --bg-tertiary: #e8e8e8;
       --text-primary: #1a1a1a; --text-secondary: #555555; --text-tertiary: #6f6f6f;
-      --accent: #1a6b8a; --accent-hover: #155570; --border: #dddddd;
+      --accent: #1a6b8a; --accent-hover: #155570; --accent-ink: #ffffff;
+      --accent-soft: rgba(26, 107, 138, 0.08); --border: #d9d9d9;
+      --ok: #15803d; --ok-bg: rgba(21, 128, 61, 0.12);
+      --warn: #a16207; --warn-bg: rgba(161, 98, 7, 0.12);
+      --err: #b91c1c; --err-bg: rgba(185, 28, 28, 0.10);
+      --info: #0369a1; --info-bg: rgba(3, 105, 161, 0.10);
+      --neutral-bg: rgba(0, 0, 0, 0.05);
     }
     body {
       font-family: 'DM Sans', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -30,29 +44,40 @@
     /* Header */
     .admin-header {
       display: flex; align-items: center; gap: 1rem;
-      padding: 1rem 1.5rem; background: var(--bg-secondary);
+      padding: 0.75rem 1.5rem; background: var(--bg-secondary);
       border-bottom: 1px solid var(--border);
     }
     .back-btn {
       background: var(--bg-tertiary); border: 1px solid var(--border);
-      color: var(--text-primary); padding: 0.5rem 1rem; border-radius: 8px;
-      cursor: pointer; font-size: 0.875rem;
+      color: var(--text-primary); padding: 0.5rem 1rem; border-radius: var(--radius-sm);
+      cursor: pointer; font-size: 0.875rem; flex-shrink: 0;
     }
-    .back-btn:hover { background: var(--accent); color: #0f0f0f; }
-    .admin-header h1 { font-size: 1.25rem; font-weight: 600; flex: 1; }
-    .admin-header .token-status { font-size: 0.75rem; color: var(--text-tertiary); }
+    .back-btn:hover { background: var(--accent); color: var(--accent-ink); }
+    .admin-header h1 { font-size: 1.25rem; font-weight: 700; flex: 1; letter-spacing: -0.01em; }
+    .admin-header .token-status {
+      font-size: 0.72rem; color: var(--text-secondary); font-weight: 500;
+      border: 1px solid var(--border); background: var(--bg-tertiary);
+      border-radius: 999px; padding: 0.2rem 0.65rem;
+    }
 
     /* Tabs */
     .tab-bar {
-      display: flex; gap: 0; background: var(--bg-secondary);
-      border-bottom: 1px solid var(--border); padding: 0 1.5rem;
+      position: sticky; top: 0; z-index: 50;
+      display: flex; gap: 0.25rem; overflow-x: auto;
+      background: var(--bg-secondary); /* fallback — color-mix unsupported */
+      background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border); padding: 0 0.75rem;
     }
+    .tab-bar::-webkit-scrollbar { display: none; }
+    .tab-bar { scrollbar-width: none; }
     .tab-btn {
-      padding: 0.75rem 1.25rem; border: none; background: transparent;
-      color: var(--text-secondary); cursor: pointer; font-size: 0.875rem;
-      border-bottom: 2px solid transparent; transition: all 0.2s;
+      padding: 0.75rem 0.9rem; border: none; background: transparent;
+      color: var(--text-secondary); cursor: pointer; font-size: 0.85rem; font-weight: 600;
+      white-space: nowrap; letter-spacing: 0.01em;
+      border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s;
     }
-    .tab-btn:hover { color: var(--text-primary); }
+    .tab-btn:hover { color: var(--text-primary); background: var(--accent-soft); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
     .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
     .tab-content { display: none; padding: 1.5rem; max-width: 900px; }
     .tab-content.active { display: block; }
@@ -78,14 +103,21 @@
       padding: 0.625rem 1.25rem; border: none; border-radius: 8px;
       cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: all 0.2s;
     }
-    .btn-primary { background: var(--accent); color: #000; }
+    .btn-primary { background: var(--accent); color: var(--accent-ink); }
     .btn-primary:hover { background: var(--accent-hover); }
     .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
     .btn-secondary:hover { background: var(--border); }
     .btn-danger { background: var(--error); color: #fff; }
     .btn-danger:hover { opacity: 0.85; }
+    .btn.is-active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .btn.is-active:hover { background: var(--accent-hover); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-sm { padding: 0.375rem 0.75rem; font-size: 0.75rem; }
+    .btn-ghost-danger {
+      background: transparent; color: var(--err);
+      border: 1px solid transparent;
+    }
+    .btn-ghost-danger:hover { background: var(--err-bg); border-color: transparent; }
 
     /* Messages */
     .toast {
@@ -101,7 +133,11 @@
     /* Tables */
     table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
     th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
-    th { color: var(--text-secondary); font-weight: 600; }
+    th {
+      color: var(--text-tertiary); font-weight: 600; white-space: nowrap;
+      font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em;
+    }
+    tbody tr:hover { background: var(--accent-soft); }
     .text-success { color: var(--success); }
     .text-error { color: var(--error); }
 
@@ -143,6 +179,87 @@
     .error-list { margin-top: 0.5rem; font-size: 0.8125rem; }
     .error-list summary { cursor: pointer; color: var(--error); }
     .error-list li { color: var(--text-secondary); padding: 0.25rem 0; }
+
+    /* Keyboard focus visibility (WCAG 2.2 AA) */
+    .btn:focus-visible, .btn-sm:focus-visible, .back-btn:focus-visible,
+    .tab-btn:focus-visible, .page-btn:focus-visible, .kb-subtab:focus-visible,
+    .chip-x:focus-visible, .btn-ghost-danger:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+
+    /* Live toast region */
+    #toast-region {
+      position: fixed; top: 1rem; right: 1rem; z-index: 200;
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    #toast-region .toast { position: static; }
+
+    /* Status badges (semantic tokens — dark & light safe) */
+    .badge {
+      display: inline-flex; align-items: center; gap: 0.3em;
+      padding: 0.12rem 0.55rem; border-radius: 999px;
+      font-size: 0.72rem; font-weight: 600; line-height: 1.45;
+    }
+    .badge.ok { color: var(--ok); background: var(--ok-bg); }
+    .badge.warn { color: var(--warn); background: var(--warn-bg); }
+    .badge.err { color: var(--err); background: var(--err-bg); }
+    .badge.info { color: var(--info); background: var(--info-bg); }
+    .badge.ghost { color: var(--text-secondary); background: var(--neutral-bg); }
+
+    /* Knowledge sub-tab (segmented underline) */
+    .kb-subtab {
+      background: transparent; border: none; color: var(--text-secondary);
+      border-bottom: 2px solid transparent; border-radius: 0; font-weight: 600;
+    }
+    .kb-subtab:hover { color: var(--text-primary); }
+    .kb-subtab.is-active { color: var(--accent); background: transparent; border-bottom-color: var(--accent); }
+
+    /* Modal sheets — depth + hairline over the backdrop */
+    [role="dialog"] > div { box-shadow: var(--shadow-1); border: 1px solid var(--border); }
+
+    /* Slim, themed scrollbars */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 999px; border: 2px solid var(--bg-primary); }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+    * { scrollbar-width: thin; scrollbar-color: var(--bg-tertiary) transparent; }
+    /* Config tab — Tier 3 gateway + restricted words */
+    #tab-config .ctl-section { max-width: 640px; margin-top: 1.75rem; padding-top: 1.25rem; border-top: 1px solid var(--border); }
+    #tab-config .ctl-title { font-weight: 600; font-size: 0.95rem; }
+    #tab-config .ctl-sub { font-size: 0.85rem; color: var(--text-tertiary); line-height: 1.45; margin: 0.25rem 0 0.85rem; }
+    #tab-config .ctl-stat { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 0.85rem; align-items: center; }
+    #tab-config .ctl-stat b { color: var(--text-primary); font-weight: 600; }
+    #tab-config .ctl-input { background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px; padding: 0.45rem 0.6rem; font-size: 0.85rem; } /* focus: global input:focus ring */
+    /* Model rows — stable 3-column grid: default-radio | name(ellipsis) | control cluster */
+    #tab-config .t3-model-row {
+      display: grid; grid-template-columns: 20px minmax(0, 1fr) auto;
+      align-items: center; gap: 0.65rem; min-height: 2.5rem; padding: 0.15rem 0.25rem;
+    }
+    #tab-config .t3-model-row + .t3-model-row { border-top: 1px solid var(--border); }
+    #tab-config .t3-model-row:hover { background: var(--accent-soft); border-radius: 8px; }
+    #tab-config .t3-model-row input[type="radio"] { accent-color: var(--accent); margin: 0; justify-self: center; }
+    #tab-config .t3-model-row .t3-name {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.85rem; color: var(--text-primary); min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #tab-config .t3-ctl { display: inline-flex; align-items: center; gap: 0.5rem; }
+    #tab-config .t3-model-row .btn-ghost-danger {
+      width: 30px; height: 30px; padding: 0; display: inline-grid; place-items: center;
+      border-radius: 8px; font-size: 0.95rem;
+    }
+    #tab-config .ctl-chip-row { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+    #tab-config .chip { display: inline-flex; align-items: center; gap: 0.4rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.25rem 0.2rem 0.7rem; font-size: 0.8rem; color: var(--text-secondary); }
+    #tab-config .chip .chip-x { width: 20px; height: 20px; display: inline-grid; place-items: center; background: none; border: none; color: var(--text-tertiary); cursor: pointer; font-size: 0.9rem; line-height: 1; padding: 0; border-radius: 50%; }
+    #tab-config .chip .chip-x:hover { color: var(--err); background: var(--err-bg); }
+    /* Mini on/off switch per Tier-3 model row */
+    #tab-config .t3-enable { position: relative; display: inline-block; width: 32px; height: 18px; flex-shrink: 0; cursor: pointer; }
+    #tab-config .t3-enable input { position: absolute; opacity: 0; width: 0; height: 0; }
+    #tab-config .t3-enable span { position: absolute; inset: 0; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 999px; transition: background 0.15s ease; }
+    #tab-config .t3-enable span::before { content: ""; position: absolute; height: 12px; width: 12px; left: 2px; top: 2px; background: var(--text-tertiary); border-radius: 50%; transition: transform 0.15s ease; }
+    #tab-config .t3-enable input:checked + span { background: var(--accent); border-color: transparent; }
+    #tab-config .t3-enable input:checked + span::before { transform: translateX(14px); background: var(--accent-ink); }
+    #tab-config .t3-enable input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+    #tab-config .t3-enable:hover span { border-color: var(--accent-hover); }
   </style>
 </head>
 <body>
@@ -159,14 +276,13 @@
     <button class="tab-btn" data-tab="config">Config</button>
     <button class="tab-btn" data-tab="models">Model Access</button>
     <button class="tab-btn" data-tab="feedback">Feedback Reports</button>
-    <button class="tab-btn" data-tab="discovered">Discovered Roles</button>
     <button class="tab-btn" data-tab="knowledge">Knowledge</button>
   </div>
 
   <!-- Tab: Applications & API Keys -->
   <div class="tab-content active" id="tab-apps">
     <div style="display:flex;gap:0.5rem;margin-bottom:1.25rem">
-      <button class="btn btn-sm btn-secondary" onclick="showAppsMode('list')" id="apps-mode-list" style="background:var(--accent);color:#000">Applications</button>
+      <button class="btn btn-sm btn-secondary is-active" onclick="showAppsMode('list')" id="apps-mode-list">Applications</button>
       <button class="btn btn-sm btn-secondary" onclick="showAppsMode('new')" id="apps-mode-new">New Application</button>
     </div>
     <div id="apps-list-view"><div style="overflow-x:auto"><table><thead><tr><th>Name</th><th>Billing</th><th>Status</th><th>Keys</th><th>Created</th><th></th></tr></thead><tbody id="apps-table-body"><tr><td colspan="6" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr></tbody></table></div></div>
@@ -180,8 +296,8 @@
       <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem"><button class="btn btn-sm btn-secondary" onclick="showAppsMode('list')">← Back</button><h3 id="apps-keys-title" style="margin:0">API Keys</h3><button class="btn btn-sm btn-primary" onclick="generateKey()">+ Generate New Key</button></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Name</th><th>Prefix</th><th>Status</th><th>Last Used</th><th>Created</th><th></th></tr></thead><tbody id="apps-keys-body"><tr><td colspan="6" style="text-align:center;color:var(--text-tertiary)">No keys yet</td></tr></tbody></table></div>
     </div>
-    <div id="key-created-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
-      <div style="background:var(--bg-secondary);padding:2rem;border-radius:12px;max-width:520px;width:90%;border:1px solid var(--border)"><h3 style="margin-bottom:0.5rem">API Key Created</h3><p style="color:#f39c12;font-size:0.85rem;margin-bottom:1rem">⚠ Copy this key now — it will never be shown again.</p><div style="display:flex;gap:0.5rem;margin-bottom:1rem"><input type="text" id="key-created-value" readonly style="flex:1;font-family:monospace;font-size:0.85rem;background:var(--bg-primary);padding:0.75rem;border:1px solid var(--border);border-radius:8px;color:var(--text-primary)"><button class="btn btn-primary" onclick="copyCreatedKey()">Copy</button></div><button class="btn btn-secondary" onclick="closeKeyModal()">Close</button></div>
+    <div id="key-created-modal" role="dialog" aria-modal="true" aria-label="API Key dibuat" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
+      <div style="background:var(--bg-secondary);padding:2rem;border-radius:12px;max-width:520px;width:90%;border:1px solid var(--border)"><h3 style="margin-bottom:0.5rem">API Key Created</h3><p style="color:var(--warn);font-size:0.85rem;margin-bottom:1rem">⚠ Copy this key now — it will never be shown again.</p><div style="display:flex;gap:0.5rem;margin-bottom:1rem"><input type="text" id="key-created-value" readonly style="flex:1;font-family:monospace;font-size:0.85rem;background:var(--bg-primary);padding:0.75rem;border:1px solid var(--border);border-radius:8px;color:var(--text-primary)"><button class="btn btn-primary" onclick="copyCreatedKey()">Copy</button></div><button class="btn btn-secondary" onclick="closeKeyModal()">Close</button></div>
     </div>
   </div>
 
@@ -227,7 +343,7 @@
       <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 0;border-bottom:1px solid var(--border)">
         <div>
           <div style="font-weight:600;margin-bottom:0.25rem">Passthrough Mode</div>
-          <div style="font-size:0.85rem;color:var(--text-tertiary)">Bypass all routing, skill classification, and prompt refinement. Sends raw prompt directly to the model with a minimal system prompt. Useful for evaluating base model output.</div>
+          <div style="font-size:0.85rem;color:var(--text-tertiary)">Bypass the auto model router. Sends the raw prompt directly to the model with a minimal system prompt. Useful for evaluating base model output.</div>
         </div>
         <label class="toggle-switch" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;margin-left:1rem">
           <input type="checkbox" id="passthrough-toggle" onchange="togglePassthrough(this.checked)" style="opacity:0;width:0;height:0">
@@ -236,6 +352,72 @@
       </div>
       <div id="passthrough-status" style="margin-top:0.75rem;font-size:0.85rem;color:var(--text-tertiary)">Loading...</div>
     </div>
+
+    <div class="ctl-section">
+      <div class="ctl-title">Runtime Config — Env Overrides</div>
+      <div class="ctl-sub">Override nilai environment di runtime (tidak menulis file .env; kembali ke nilai env saat server restart). KNOWLEDGE_MIN_SCORE adalah knop utama untuk backtesting threshold retrieval.</div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.65rem 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:600;font-size:.88rem">KNOWLEDGE_MIN_SCORE</div>
+          <div style="font-size:.8rem;color:var(--text-tertiary)">Floor relevansi retrieval (cosine &amp; keyword-share, rentang 0–1). Makin tinggi → retrieval makin sering kosong → eskalasi Tier-3.</div>
+        </div>
+        <input type="number" id="env-min-score" class="ctl-input" min="0" max="1" step="0.05" style="width:110px;flex-shrink:0" aria-label="KNOWLEDGE_MIN_SCORE" oninput="envRender()" onkeydown="if(event.key==='Enter')saveEnvConfig()">
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.65rem 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:600;font-size:.88rem">ROUTING_METADATA_ENABLED</div>
+          <div style="font-size:.8rem;color:var(--text-tertiary)">Emit event SSE <code>routing</code> (model, skill, skor) ke klien saat inferensi.</div>
+        </div>
+        <label class="t3-enable" title="Aktifkan / nonaktifkan routing metadata">
+          <input type="checkbox" id="env-routing" aria-label="ROUTING_METADATA_ENABLED" onchange="envRender()">
+          <span></span>
+        </label>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.65rem 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:600;font-size:.88rem">TIER3_ENABLED</div>
+          <div style="font-size:.8rem;color:var(--text-tertiary)">Master switch gateway eksternal. Matikan → semua permintaan diproses privat (Bedrock).</div>
+        </div>
+        <label class="t3-enable" title="Aktifkan / nonaktifkan gateway Tier-3">
+          <input type="checkbox" id="env-tier3" aria-label="TIER3_ENABLED" onchange="envRender()">
+          <span></span>
+        </label>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:.75rem;min-height:2rem;margin-top:.5rem">
+        <span id="env-dirty-hint" style="display:none;font-size:0.8rem;color:var(--warn)">● Perubahan belum disimpan</span>
+        <button id="env-save-btn" class="btn btn-sm btn-primary" disabled onclick="saveEnvConfig()">Save changes</button>
+      </div>
+    </div>
+
+    <div class="ctl-section">
+      <div class="ctl-title">Tier 3 — External Gateway</div>
+      <div class="ctl-sub">OpenAI-compatible provider untuk permintaan teks umum (non-restricted, tanpa knowledge internal). Base URL &amp; API key dari environment — tidak pernah disimpan/return oleh API.</div>
+      <div id="tier3-status" class="ctl-stat">Loading…</div>
+      <div id="tier3-legend" class="ctl-sub" style="display:none;margin:0 0 0.6rem;font-size:0.78rem;color:var(--text-tertiary)">○ radio = set default &nbsp;·&nbsp; switch = enable / disable model</div>
+      <div id="tier3-models" style="margin-bottom:0.4rem"></div>
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:0.75rem;min-height:2rem;margin-bottom:0.6rem">
+        <span id="tier3-dirty-hint" style="display:none;font-size:0.8rem;color:var(--warn)">● Perubahan belum disimpan</span>
+        <button id="tier3-save-btn" class="btn btn-sm btn-primary" disabled onclick="saveTier3()">Save changes</button>
+      </div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+        <input type="text" id="tier3-new-model" class="ctl-input" placeholder="Model id, mis. qwen3.7-flash-2026-07-15" style="flex:1;min-width:220px" aria-label="Tier-3 model id" onkeydown="if(event.key==='Enter')tier3AddModel()">
+        <button class="btn btn-sm btn-secondary" onclick="tier3AddModel()">+ Add</button>
+      </div>
+    </div>
+
+    <div class="ctl-section">
+      <div class="ctl-title">Restricted Words</div>
+      <div class="ctl-sub">Term yang memaksa permintaan tetap privat — tidak pernah dikirim ke gateway eksternal. Pencocokan case-insensitive pada prompt/dokumen ter-mask.</div>
+      <div id="restricted-terms-list" class="ctl-chip-row"></div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.85rem">
+        <input type="text" id="restricted-term-new" class="ctl-input" placeholder="Tambah kata, mis. budget 2027" style="flex:1;min-width:220px" aria-label="Restricted word" onkeydown="if(event.key==='Enter')addRestrictedTerm()">
+        <button class="btn btn-sm btn-primary" onclick="addRestrictedTerm()">+ Add</button>
+      </div>
+    </div>
   </div>
 
   <!-- Tab: Model Access -->
@@ -243,18 +425,18 @@
     <h3>Model Access Management</h3>
     <p style="color:var(--text-tertiary);margin-bottom:1rem">Manage which users can access private models. Models with no whitelisted users are public (all users can access).</p>
     <div id="model-access-list"></div>
-    <div id="model-access-modal" class="modal-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+    <div id="model-access-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Kelola akses model" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
       <div class="modal-box" style="background:var(--bg-secondary);padding:1.5rem;border-radius:12px;max-width:500px;width:90%">
         <h3 id="modal-model-title" style="margin-bottom:1rem"></h3>
         <div style="margin-bottom:0.75rem">
           <label>Add user by username:</label>
           <div style="display:flex;gap:0.5rem;margin-top:0.35rem">
-            <input type="text" id="modal-username-input" placeholder="username" style="flex:1;padding:0.5rem;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary)">
+            <input type="text" id="modal-username-input" aria-label="Username pengguna" placeholder="username" style="flex:1;padding:0.5rem;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary)">
             <button class="btn" onclick="addModalUser()" style="white-space:nowrap">Add</button>
           </div>
         </div>
         <div id="modal-user-chips" style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-bottom:1rem;min-height:2rem"></div>
-        <div id="modal-unknown-usernames" style="color:#e6a817;font-size:0.85rem;margin-bottom:0.5rem;display:none"></div>
+        <div id="modal-unknown-usernames" style="color:var(--warn);font-size:0.85rem;margin-bottom:0.5rem;display:none"></div>
         <div style="display:flex;gap:0.5rem;justify-content:flex-end">
           <button class="btn" onclick="closeModal()">Cancel</button>
           <button class="btn btn-primary" onclick="saveModal()">Save</button>
@@ -285,24 +467,6 @@
     </div>
     <div id="fb-list"><p style="color:var(--text-tertiary)">Loading...</p></div>
     <div id="fb-pagination" style="display:flex;gap:0.5rem;margin-top:0.75rem;align-items:center"></div>
-  </div>
-
-  <!-- Tab N: Discovered Roles -->
-  <div class="tab-content" id="tab-discovered">
-    <p style="color:var(--text-tertiary);margin-bottom:1rem">Roles generated by the AI when <code>skill=fallback</code>. Review to discover missing skills for the taxonomy.</p>
-
-    <div style="display:flex;gap:0;margin-bottom:1rem">
-      <button class="btn btn-sm btn-secondary" onclick="loadDiscoveredRoles('new')" id="dr-tab-new" style="border-radius:8px 0 0 8px">New</button>
-      <button class="btn btn-sm btn-secondary" onclick="loadDiscoveredRoles('accepted')" id="dr-tab-accepted">Accepted</button>
-      <button class="btn btn-sm btn-secondary" onclick="loadDiscoveredRoles('rejected')" id="dr-tab-rejected" style="border-radius:0 8px 8px 0">Rejected</button>
-    </div>
-
-    <div style="overflow-x:auto">
-      <table>
-        <thead><tr><th>Role</th><th>Count</th><th>Last Seen</th><th style="width:70px">Context</th><th style="width:180px">Action</th></tr></thead>
-        <tbody id="discovered-table-body"><tr><td colspan="5" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr></tbody>
-      </table>
-    </div>
   </div>
 
   <!-- Tab: Knowledge Upload -->
@@ -348,36 +512,78 @@
       <div id="kb-upload-status" style="margin-top:0.75rem;font-size:0.85rem;color:var(--text-secondary)"></div>
     </div>
 
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
-      <h4 style="margin:0">Recent Ingestions</h4>
-      <button class="btn btn-sm btn-secondary" onclick="loadKnowledgeJobs()">↻ Refresh</button>
+    <div style="margin:0.5rem 0 0.75rem;display:flex;gap:0.5rem;border-bottom:1px solid var(--border)">
+      <button class="btn btn-sm kb-subtab is-active" data-kb="docs" onclick="switchKbPanel('docs')">Documents</button>
+      <button class="btn btn-sm kb-subtab" data-kb="jobs" onclick="switchKbPanel('jobs')">Ingestion Jobs</button>
     </div>
-    <div style="overflow-x:auto"><table>
-      <thead><tr><th>File</th><th>Type</th><th>Binding</th><th>Source</th><th>Sensitivity</th><th>Status</th><th>Chunks</th><th>By</th><th>Created</th><th></th></tr></thead>
-      <tbody id="kb-jobs-body"><tr><td colspan="10" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr></tbody>
-    </table></div>
+
+    <!-- Sub-tab: Documents (admin-managed doc list grouped by source_file) -->
+    <div id="kb-docs-panel">
+      <p style="font-size:0.8rem;color:var(--text-tertiary);margin:0 0 0.75rem">Note: Documents dikelompokkan berdasarkan nama file asli. Upload ulang file yang sama membuat chunk baru yang tampil tercampur di view ini (best-effort).</p>
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-bottom:0.75rem">
+        <input type="text" id="kb-search" aria-label="Cari title atau file dokumen" placeholder="Cari title / file..." style="flex:1;min-width:170px" onkeydown="if(event.key==='Enter')kbPage=0,loadKnowledgeDocs()">
+        <select id="kb-f-doctype"></select>
+        <select id="kb-f-binding"></select>
+        <select id="kb-f-source"></select>
+        <select id="kb-f-sensitivity"></select>
+        <button class="btn btn-sm btn-primary" onclick="kbPage=0;loadKnowledgeDocs()">Search</button>
+        <button class="btn btn-sm btn-secondary" onclick="clearKbFilters()">Clear</button>
+        <span style="margin-left:auto;display:flex;align-items:center;gap:0.4rem">
+          <button class="btn btn-sm" onclick="kbPrevPage()" id="kb-prev-btn">‹ Prev</button>
+          <span id="kb-page-label" style="font-size:0.85rem;color:var(--text-secondary)"></span>
+          <button class="btn btn-sm" onclick="kbNextPage()" id="kb-next-btn">Next ›</button>
+        </span>
+      </div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Title</th><th>Version</th><th>Doc Type</th><th>Binding</th><th>Sensitivity</th><th>Source Type</th><th>Chunks</th><th>Created</th><th>Actions</th></tr></thead>
+        <tbody id="kb-docs-body"><tr><td colspan="9" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <!-- Sub-tab: Ingestion Jobs -->
+    <div id="kb-jobs-panel" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+        <h4 style="margin:0">Recent Ingestions</h4>
+        <button class="btn btn-sm btn-secondary" onclick="loadKnowledgeJobs()">↻ Refresh</button>
+      </div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>File</th><th>Type</th><th>Binding</th><th>Source</th><th>Sensitivity</th><th>Status</th><th>Chunks</th><th>By</th><th>Created</th><th></th></tr></thead>
+        <tbody id="kb-jobs-body"><tr><td colspan="10" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr></tbody>
+      </table></div>
+    </div>
   </div>
 
-  <!-- Discovered Roles Context Modal -->
-  <div id="dr-context-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
-    <div style="background:var(--bg-secondary);padding:1.5rem;border-radius:12px;max-width:600px;width:90%;max-height:70vh;overflow-y:auto">
-      <h3 style="margin-bottom:0.75rem" id="dr-context-title">Sample Context</h3>
-      <div id="dr-context-body" style="font-size:0.85rem;color:var(--text-secondary);white-space:pre-wrap"></div>
+  <!-- Knowledge Document Edit Modal -->
+  <div id="kb-edit-modal" role="dialog" aria-modal="true" aria-label="Edit metadata dokumen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:var(--bg-secondary);padding:1.25rem;border-radius:12px;max-width:520px;width:90%;max-height:80vh;overflow-y:auto">
+      <h3 style="margin-bottom:0.75rem">Edit Document Metadata</h3>
+      <div id="kb-edit-file" style="font-size:0.8rem;color:var(--text-tertiary);margin-bottom:0.75rem;word-break:break-all"></div>
+      <div><label>Title</label><input type="text" id="kb-m-title"></div>
+      <div class="form-row">
+        <div><label>Version</label><input type="text" id="kb-m-version" placeholder="e.g. 2.0"></div>
+        <div><label>Doc Type</label><select id="kb-m-doctype"></select></div>
+      </div>
+      <div class="form-row">
+        <div><label>Binding Level</label><select id="kb-m-binding"></select></div>
+        <div><label>Sensitivity</label><select id="kb-m-sensitivity"></select></div>
+      </div>
+      <div><label>Source Type</label><select id="kb-m-source"></select></div>
       <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem">
-        <button class="btn" onclick="document.getElementById('dr-context-modal').style.display='none'">Close</button>
+        <button class="btn" onclick="closeKbEdit()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveKbEdit()" id="kb-m-save">Save</button>
       </div>
     </div>
   </div>
 
   <!-- Feedback Detail Modal -->
-  <div id="fb-detail-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+  <div id="fb-detail-modal" role="dialog" aria-modal="true" aria-label="Detail feedback" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
     <div style="background:var(--bg-secondary);padding:1.5rem;border-radius:12px;max-width:650px;width:90%;max-height:80vh;overflow-y:auto">
       <h3 id="fb-detail-title" style="margin-bottom:0.75rem"></h3>
       <div id="fb-detail-body"></div>
       <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem">
         <button class="btn" onclick="closeFbDetail()">Close</button>
         <button class="btn" onclick="updateFbStatus('reviewed')" id="fb-btn-reviewed">Mark Reviewed</button>
-        <button class="btn" style="background:var(--accent);color:#fff;border-color:var(--accent)" onclick="updateFbStatus('resolved')" id="fb-btn-resolved">Mark Resolved</button>
+        <button class="btn btn-primary" onclick="updateFbStatus('resolved')" id="fb-btn-resolved">Mark Resolved</button>
       </div>
     </div>
   </div>
@@ -394,8 +600,17 @@
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
     function showToast(msg, type = 'success') {
+      let region = document.getElementById('toast-region');
+      if (!region) {
+        region = document.createElement('div');
+        region.id = 'toast-region';
+        region.setAttribute('role', 'status');
+        region.setAttribute('aria-live', 'polite');
+        document.body.appendChild(region);
+      }
       const t = document.createElement('div'); t.className = `toast ${type}`; t.textContent = msg;
-      document.body.appendChild(t); setTimeout(() => t.remove(), 4000);
+      region.appendChild(t);
+      setTimeout(() => t.remove(), 4000);
     }
     function goBack() { window.location.href = '/'; }
     function togglePwd(id, btn) {
@@ -426,7 +641,7 @@
         for (const m of data.models) {
           html += `<tr>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border)"><code>${m.modelId}</code></td>
-            <td style="padding:0.5rem;border-bottom:1px solid var(--border)">${m.isPrivate ? '<span style="color:#e74c3c">🔴 Private</span>' : '<span style="color:#2ecc71">🟢 Public</span>'}</td>
+            <td style="padding:0.5rem;border-bottom:1px solid var(--border)">${m.isPrivate ? '<span class="badge err">🔒 Private</span>' : '<span class="badge ok">🌐 Public</span>'}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border)">${m.users.length > 0 ? m.users.map(u => u.username).join(', ') : '—'}</td>
             <td style="padding:0.5rem;border-bottom:1px solid var(--border)"><button class="btn" onclick="openModal('${m.modelId}', ${JSON.stringify(m.users).replace(/"/g, "'")})">Manage</button></td>
           </tr>`;
@@ -547,9 +762,9 @@
     }
 
     function statusBadge(status) {
-      if (status === 'resolved') return '<span style="color:#2ecc71;font-size:0.8rem">✅ Resolved</span>';
-      if (status === 'reviewed') return '<span style="color:#3498db;font-size:0.8rem">👁 Reviewed</span>';
-      return '<span style="color:#f39c12;font-size:0.8rem">⏳ Pending</span>';
+      if (status === 'resolved') return '<span class="badge ok">✅ Resolved</span>';
+      if (status === 'reviewed') return '<span class="badge info">👁 Reviewed</span>';
+      return '<span class="badge warn">⏳ Pending</span>';
     }
 
     async function viewFbDetail(id) {
@@ -621,58 +836,10 @@
         if (btn.dataset.tab === 'apps') loadApplications();
         if (btn.dataset.tab === 'models') loadModelAccess();
         if (btn.dataset.tab === 'feedback') { fbPage = 1; loadFeedbackReports(); }
-        if (btn.dataset.tab === 'discovered') loadDiscoveredRoles();
-        if (btn.dataset.tab === 'knowledge') loadKnowledgeJobs();
+        if (btn.dataset.tab === 'knowledge') switchKbPanel('docs');
+        if (btn.dataset.tab === 'config') { loadConfig(); loadEnvConfig(); loadTier3Status(); loadRestrictedTerms(); }
       });
     });
-
-    // ─── Tab N: Discovered Roles ─────────────────────────────────────────────
-    let drStatus = 'new';
-
-    async function loadDiscoveredRoles(status) {
-      if (status) drStatus = status;
-      // Highlight sub-tab
-      document.querySelectorAll('[id^=dr-tab-]').forEach(b => { b.style.background = ''; b.style.color = ''; });
-      const activeBtn = document.getElementById('dr-tab-' + drStatus);
-      if (activeBtn) { activeBtn.style.background = 'var(--accent)'; activeBtn.style.color = '#000'; }
-      try {
-        const data = await api(API_BASE + '/admin/discovered-roles?status=' + drStatus);
-        const tbody = document.getElementById('discovered-table-body');
-        if (!data || !data.length) {
-          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-tertiary)">No ${drStatus} roles.</td></tr>`;
-          return;
-        }
-        tbody.innerHTML = data.map(d => {
-          let action = '';
-          if (drStatus === 'new') {
-            action = `<button class="btn btn-sm" style="background:var(--success);color:#fff;margin-right:4px" onclick="actRole('accept','${esc(d.role)}')">✓ Accept</button><button class="btn btn-sm" style="background:var(--error);color:#fff" onclick="actRole('reject','${esc(d.role)}')">✗ Reject</button>`;
-          } else if (drStatus === 'accepted') {
-            action = `<button class="btn btn-sm" style="background:var(--accent);color:#000" onclick="actRole('deploy','${esc(d.role)}')">🚀 Deploy</button>`;
-          } else {
-            action = `<span style="color:var(--text-tertiary);font-size:0.8rem">${drStatus}</span>`;
-          }
-          const ctxId = 'ctx-' + Math.random().toString(36).slice(2, 8);
-          return `<tr><td><strong>${esc(d.role)}</strong></td><td>${d.count}</td><td>${new Date(d.lastSeen).toLocaleDateString()}</td><td><button class="btn btn-sm btn-secondary" onclick="showDrContext('${ctxId}')" style="font-size:0.7rem">View</button><div id="${ctxId}" style="display:none">${esc(d.sampleContext)}<br><br><b>Intent:</b> ${esc(d.sampleIntent || '')}</div></td><td style="white-space:nowrap">${action}</td></tr>`;
-        }).join('');
-      } catch (e) { showToast(e.message, 'error'); }
-    }
-
-    function showDrContext(id) {
-      const el = document.getElementById(id);
-      if (!el) return;
-      document.getElementById('dr-context-body').textContent = el.textContent;
-      document.getElementById('dr-context-modal').style.display = 'flex';
-    }
-
-    async function actRole(action, role) {
-      try {
-        await api(API_BASE + '/admin/discovered-roles/' + action, {
-          method: 'POST',
-          body: JSON.stringify({ role }),
-        });
-        loadDiscoveredRoles();
-      } catch (e) { showToast(e.message, 'error'); }
-    }
 
     // ─── Tab: Bulk Upload ──────────────────────────────────────────────────
     let bulkData = [];
@@ -836,6 +1003,228 @@
       }
     }
 
+    // ─── Config: env runtime overrides ──────────────────────────────────────
+    let envSaved = { knowledgeMinScore: 0.4, routingMetadataEnabled: true, tier3Enabled: false };
+
+    function envCurrent() {
+      const scoreEl = document.getElementById('env-min-score');
+      return {
+        knowledgeMinScore: scoreEl ? parseFloat(scoreEl.value) : NaN,
+        routingMetadataEnabled: document.getElementById('env-routing').checked,
+        tier3Enabled: document.getElementById('env-tier3').checked,
+      };
+    }
+
+    function envIsDirty() {
+      const cur = envCurrent();
+      return cur.knowledgeMinScore !== envSaved.knowledgeMinScore
+        || cur.routingMetadataEnabled !== envSaved.routingMetadataEnabled
+        || cur.tier3Enabled !== envSaved.tier3Enabled;
+    }
+
+    function envValid() {
+      const s = envCurrent().knowledgeMinScore;
+      return Number.isFinite(s) && s >= 0 && s <= 1;
+    }
+
+    function envRender() {
+      const btn = document.getElementById('env-save-btn');
+      const hint = document.getElementById('env-dirty-hint');
+      if (!btn || btn.dataset.busy === '1') return;
+      const dirty = envIsDirty();
+      btn.disabled = !(dirty && envValid());
+      if (hint) hint.style.display = dirty ? 'inline' : 'none';
+    }
+
+    async function loadEnvConfig() {
+      try {
+        const data = await api(`${API_BASE}/admin/env`);
+        envSaved = {
+          knowledgeMinScore: data.knowledgeMinScore,
+          routingMetadataEnabled: data.routingMetadataEnabled === true,
+          tier3Enabled: data.tier3Enabled === true,
+        };
+        document.getElementById('env-min-score').value = envSaved.knowledgeMinScore;
+        document.getElementById('env-routing').checked = envSaved.routingMetadataEnabled;
+        document.getElementById('env-tier3').checked = envSaved.tier3Enabled;
+        envRender();
+      } catch (e) { showToast('Failed to load env config: ' + e.message, 'error'); }
+    }
+
+    async function saveEnvConfig() {
+      if (!envValid()) return showToast('KNOWLEDGE_MIN_SCORE harus angka 0–1', 'warning');
+      const btn = document.getElementById('env-save-btn');
+      if (btn) { btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Menyimpan…'; }
+      try {
+        const cur = envCurrent();
+        await api(`${API_BASE}/admin/env`, { method: 'PUT', body: JSON.stringify(cur) });
+        envSaved = { ...cur };
+        showToast('Env config saved');
+        loadTier3Status(); // refresh Tier-3 status block if master switch changed
+      } catch (e) { showToast(e.message, 'error'); }
+      finally {
+        if (btn) { delete btn.dataset.busy; btn.textContent = 'Save changes'; }
+        envRender();
+      }
+    }
+
+    // ─── Config: Tier 3 gateway + restricted words ──────────────────────────
+    let tier3Models = [];
+    let tier3Saved = []; // last persisted snapshot — drives the dirty state
+
+    function syncTier3Saved() {
+      tier3Saved = tier3Models.map(m => ({ modelId: m.modelId, enabled: m.enabled, isDefault: m.isDefault }));
+    }
+
+    function tier3IsDirty() {
+      if (tier3Models.length !== tier3Saved.length) return true;
+      return tier3Models.some((m, i) =>
+        m.modelId !== tier3Saved[i].modelId ||
+        m.enabled !== tier3Saved[i].enabled ||
+        m.isDefault !== tier3Saved[i].isDefault);
+    }
+
+    function updateSaveBar() {
+      const btn = document.getElementById('tier3-save-btn');
+      const hint = document.getElementById('tier3-dirty-hint');
+      if (!btn || btn.dataset.busy === '1') return;
+      const dirty = tier3IsDirty();
+      btn.disabled = !dirty;
+      if (hint) hint.style.display = dirty ? 'inline' : 'none';
+    }
+
+    async function loadTier3Status() {
+      const statusEl = document.getElementById('tier3-status');
+      try {
+        const data = await api(`${API_BASE}/admin/tier3`);
+        tier3Models = data.models.map(m => ({ modelId: m.modelId, enabled: m.enabled, isDefault: m.isDefault }));
+        syncTier3Saved();
+        statusEl.innerHTML = `
+          <span class="badge ${data.enabled ? 'ok' : 'err'}">${data.enabled ? 'Enabled' : 'Disabled'}</span>
+          <span>Host: <b>${esc(data.baseUrlHost || '—')}</b></span>
+          <span>API key: <b>${data.apiKeySet ? '✓ set' : '—'}</b></span>
+          <span>Ready: <b>${data.gatewayReady ? 'yes' : 'no'}</b></span>`;
+        renderTier3Models();
+      } catch (e) {
+        statusEl.innerHTML = '<span style="color:var(--err)">Failed to load Tier-3: ' + esc(e.message) + '</span>';
+      }
+    }
+
+    function renderTier3Models() {
+      const listEl = document.getElementById('tier3-models');
+      const legendEl = document.getElementById('tier3-legend');
+      if (!tier3Models.length) {
+        listEl.innerHTML = '<div style="font-size:0.85rem;color:var(--text-tertiary);padding:0.5rem 0">Belum ada model eksternal terdaftar.</div>';
+        if (legendEl) legendEl.style.display = 'none';
+        updateSaveBar();
+        return;
+      }
+      if (legendEl) legendEl.style.display = 'block';
+      listEl.innerHTML = tier3Models.map((m, i) => `
+        <div class="t3-model-row">
+          <input type="radio" name="tier3-default" ${m.isDefault ? 'checked' : ''} title="Jadikan default" aria-label="Jadikan ${esc(m.modelId)} default" onchange="tier3SetDefault(${i})">
+          <span class="t3-name" title="${esc(m.modelId)}">${esc(m.modelId)}</span>
+          <span class="t3-ctl">
+            <label class="t3-enable" title="${m.enabled ? 'Nonaktifkan model' : 'Aktifkan model'}">
+              <input type="checkbox" ${m.enabled ? 'checked' : ''} aria-label="${m.enabled ? 'Nonaktifkan' : 'Aktifkan'} ${esc(m.modelId)}" onchange="tier3ToggleEnabled(${i})">
+              <span></span>
+            </label>
+            <button class="btn-ghost-danger" title="Hapus model" aria-label="Hapus ${esc(m.modelId)}" onclick="tier3RemoveModel(${i})">✕</button>
+          </span>
+        </div>`).join('');
+      updateSaveBar();
+    }
+
+    function tier3SetDefault(i) {
+      tier3Models = tier3Models.map((m, ix) => ({ ...m, isDefault: ix === i }));
+      renderTier3Models();
+    }
+
+    function tier3ToggleEnabled(i) {
+      const m = tier3Models[i];
+      m.enabled = !m.enabled;
+      if (m.isDefault && !m.enabled) {
+        const altIdx = tier3Models.findIndex((x, ix) => ix !== i && x.enabled);
+        tier3Models.forEach((x, ix) => { x.isDefault = altIdx !== -1 && ix === altIdx; });
+      }
+      renderTier3Models();
+    }
+
+    function tier3AddModel() {
+      const input = document.getElementById('tier3-new-model');
+      const modelId = input.value.trim();
+      if (!modelId) return showToast('Masukkan model id', 'warning');
+      if (tier3Models.some(m => m.modelId === modelId)) return showToast('Model sudah ada', 'warning');
+      tier3Models.push({ modelId, enabled: true, isDefault: tier3Models.length === 0 });
+      input.value = '';
+      renderTier3Models();
+    }
+
+    function tier3RemoveModel(i) {
+      const removedDefault = tier3Models[i].isDefault;
+      tier3Models.splice(i, 1);
+      if (removedDefault && tier3Models.length) tier3Models[0].isDefault = true;
+      renderTier3Models();
+    }
+
+    async function saveTier3() {
+      const btn = document.getElementById('tier3-save-btn');
+      if (btn) { btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Menyimpan…'; }
+      try {
+        await api(`${API_BASE}/admin/tier3`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            models: tier3Models.map(({ modelId, enabled }) => ({ modelId, enabled })),
+            defaultModel: tier3Models.find(m => m.isDefault)?.modelId,
+          }),
+        });
+        syncTier3Saved();
+        showToast('Tier-3 models saved');
+        loadTier3Status();
+      } catch (e) { showToast(e.message, 'error'); }
+      finally {
+        if (btn) { delete btn.dataset.busy; btn.textContent = 'Save changes'; }
+        updateSaveBar();
+      }
+    }
+
+    async function loadRestrictedTerms() {
+      const listEl = document.getElementById('restricted-terms-list');
+      try {
+        const data = await api(`${API_BASE}/admin/restricted-terms`);
+        if (!data.terms.length) {
+          listEl.innerHTML = '<div style="font-size:0.85rem;color:var(--text-tertiary)">Belum ada restricted word.</div>';
+          return;
+        }
+        listEl.innerHTML = data.terms.map(t => `
+          <span class="chip">${esc(t)}
+            <button class="chip-x" data-term="${esc(t)}" title="Hapus" aria-label="Hapus ${esc(t)}" onclick="delRestrictedTerm(this.dataset.term)">✕</button>
+          </span>`).join('');
+      } catch (e) {
+        listEl.innerHTML = '<span style="color:var(--err)">Failed: ' + esc(e.message) + '</span>';
+      }
+    }
+
+    async function addRestrictedTerm() {
+      const input = document.getElementById('restricted-term-new');
+      const term = input.value.trim();
+      if (!term) return showToast('Masukkan kata', 'warning');
+      try {
+        await api(`${API_BASE}/admin/restricted-terms`, { method: 'POST', body: JSON.stringify({ term }) });
+        input.value = '';
+        loadRestrictedTerms();
+        showToast('Term ditambahkan');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function delRestrictedTerm(term) {
+      try {
+        await api(`${API_BASE}/admin/restricted-terms/${encodeURIComponent(term)}`, { method: 'DELETE' });
+        loadRestrictedTerms();
+        showToast('Term dihapus');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
     // ─── Applications & API Keys ────────────────────────────────────────────
     let appsMode = 'list';
     let appsEditingId = null;
@@ -856,13 +1245,13 @@
         tbody.innerHTML = apps.map(a => `<tr>
           <td><strong>${esc(a.name)}</strong></td>
           <td>${a.billing_mode === 'PER_USER' ? '👤 Per User' : '📊 Per App'}</td>
-          <td>${a.is_active ? '<span style="color:#2ecc71">Active</span>' : '<span style="color:#e74c3c">Inactive</span>'}</td>
+          <td>${a.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge err">Inactive</span>'}</td>
           <td>${a.key_count ?? 0}</td>
           <td>${new Date(a.created_at).toLocaleDateString()}</td>
           <td>
             <button class="btn btn-sm btn-secondary" onclick="viewKeys('${a.id}','${esc(a.name)}')">Keys</button>
             <button class="btn btn-sm btn-secondary" onclick="editApp('${a.id}')">Edit</button>
-            <button class="btn btn-sm" style="background:var(--error);color:#fff" onclick="deleteApp('${a.id}','${esc(a.name)}')">×</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteApp('${a.id}','${esc(a.name)}')">×</button>
           </td></tr>`).join('');
       } catch (e) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--accent)">Error loading</td></tr>'; }
     }
@@ -872,8 +1261,8 @@
       document.getElementById('apps-list-view').style.display = mode === 'list' ? 'block' : 'none';
       document.getElementById('apps-form-view').style.display = mode === 'new' || mode === 'edit' ? 'block' : 'none';
       document.getElementById('apps-keys-view').style.display = mode === 'keys' ? 'block' : 'none';
-      document.getElementById('apps-mode-list').style.background = mode === 'list' ? 'var(--accent)' : '';
-      document.getElementById('apps-mode-new').style.background = mode === 'new' ? 'var(--accent)' : '';
+      document.getElementById('apps-mode-list').classList.toggle('is-active', mode === 'list');
+      document.getElementById('apps-mode-new').classList.toggle('is-active', mode === 'new');
       if (mode === 'list') loadApplications();
       if (mode === 'new') { document.getElementById('app-form-name').value = ''; document.getElementById('app-form-edit-id').value = ''; appsEditingId = null; }
     }
@@ -926,12 +1315,12 @@
         tbody.innerHTML = keys.map(k => `<tr>
           <td>${esc(k.name)}</td>
           <td><code>${esc(k.key_prefix)}</code></td>
-          <td>${k.is_active ? '<span style="color:#2ecc71">Active</span>' : '<span style="color:#e74c3c">Inactive</span>'}</td>
+          <td>${k.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge err">Inactive</span>'}</td>
           <td>${k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : '—'}</td>
           <td>${new Date(k.created_at).toLocaleDateString()}</td>
           <td>
             ${k.is_active ? `<button class="btn btn-sm btn-secondary" onclick="deactivateKey('${k.id}')">Deactivate</button>` : ''}
-            <button class="btn btn-sm" style="background:var(--error);color:#fff" onclick="deleteApiKey('${k.id}')">×</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteApiKey('${k.id}')">×</button>
           </td></tr>`).join('');
       } catch (e) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--accent)">Error loading keys</td></tr>'; }
     }
@@ -1113,13 +1502,13 @@
           if (!res.ok) throw new Error(j.message || 'Status check failed');
           if (j.status === 'completed') {
             showToast('Dokumen ter-index (' + j.chunks_indexed + ' chunk)');
-            loadKnowledgeJobs();
+            refreshActiveKbPanel();
             cancelKnowledgeUpload(); // reset ke state awal (re-enable btn + clear form)
             return;
           }
           if (j.status === 'failed') {
             status.innerHTML = '❌ <span class="text-error">Failed: ' + (j.error || 'unknown') + '</span>';
-            loadKnowledgeJobs();
+            refreshActiveKbPanel();
             btn.disabled = false; // re-enable — user bisa retry
             return;
           }
@@ -1131,8 +1520,8 @@
           return;
         }
       }
-      status.textContent = 'Timeout — cek tabel Recent Ingestions';
-      loadKnowledgeJobs();
+      status.textContent = 'Timeout — cek panel Documents / Ingestion Jobs';
+      refreshActiveKbPanel();
       btn.disabled = false;
     }
 
@@ -1161,10 +1550,239 @@
     }
 
     function kbStatusBadge(status) {
-      if (status === 'completed') return '<span style="color:#2ecc71;font-size:0.8rem">✅ Completed</span>';
-      if (status === 'failed') return '<span style="color:#e74c3c;font-size:0.8rem">❌ Failed</span>';
-      return '<span style="color:#f39c12;font-size:0.8rem">⏳ Processing</span>';
+      if (status === 'completed') return '<span class="badge ok">✅ Completed</span>';
+      if (status === 'failed') return '<span class="badge err">❌ Failed</span>';
+      return '<span class="badge warn">⏳ Processing</span>';
     }
+
+    // ─── Knowledge Documents (admin doc list grouped by source_file) ────────
+    // CHECK-enum values duplicated here (static HTML can't import knowledge.types.ts).
+    const KB_DOC_TYPES = ['SOP','MEMO','REGULATION','PRODUCT_FAQ','HKR','HUK','AUDIT','JUKNIS','BRD','FSD','PKS','UAT','SIT','PROJECT_CHARTER','IT_RD','HCP','CAB','ADR','SAF'];
+    const KB_BINDINGS = ['regulatory','contractual','procedural','directive','assessment','informational','other'];
+    const KB_SOURCES = ['official','internal','hukumonline'];
+    const KB_SENS = ['restricted','internal','public'];
+    const KB_PAGE_SIZE = 50;
+    let kbDocs = [];
+    let kbPage = 0;
+    let kbTotal = 0;
+    let kbEditIndex = -1;
+
+    function kbFilterOptions(values, allLabel) {
+      return '<option value="">' + allLabel + '</option>' + values.map(v => `<option value="${v}">${v}</option>`).join('');
+    }
+    function kbEnumOptions(values) {
+      return '<option value="">—</option>' + values.map(v => `<option value="${v}">${v}</option>`).join('');
+    }
+    function fillKbSelects() {
+      document.getElementById('kb-f-doctype').innerHTML = kbFilterOptions(KB_DOC_TYPES, 'All doc types');
+      document.getElementById('kb-f-binding').innerHTML = kbFilterOptions(KB_BINDINGS, 'All binding');
+      document.getElementById('kb-f-source').innerHTML = kbFilterOptions(KB_SOURCES, 'All source');
+      document.getElementById('kb-f-sensitivity').innerHTML = kbFilterOptions(KB_SENS, 'All sensitivity');
+      document.getElementById('kb-m-doctype').innerHTML = kbEnumOptions(KB_DOC_TYPES);
+      document.getElementById('kb-m-binding').innerHTML = kbEnumOptions(KB_BINDINGS);
+      document.getElementById('kb-m-source').innerHTML = kbEnumOptions(KB_SOURCES);
+      document.getElementById('kb-m-sensitivity').innerHTML = kbEnumOptions(KB_SENS);
+    }
+    fillKbSelects();
+
+    function paintKbSubtabs(name) {
+      document.querySelectorAll('.kb-subtab').forEach(b => {
+        b.classList.toggle('is-active', b.dataset.kb === name);
+      });
+    }
+    function switchKbPanel(name) {
+      paintKbSubtabs(name);
+      const docs = document.getElementById('kb-docs-panel');
+      const jobs = document.getElementById('kb-jobs-panel');
+      if (docs) docs.style.display = name === 'docs' ? '' : 'none';
+      if (jobs) jobs.style.display = name === 'jobs' ? '' : 'none';
+      if (name === 'jobs') loadKnowledgeJobs();
+      else loadKnowledgeDocs();
+    }
+    function refreshActiveKbPanel() {
+      const active = document.querySelector('.kb-subtab.is-active');
+      if (active && active.dataset.kb === 'jobs') loadKnowledgeJobs();
+      else loadKnowledgeDocs();
+    }
+
+    function kbSensBadge(s) {
+      if (!s) return '—';
+      const cls = s === 'restricted' ? 'badge err' : s === 'public' ? 'badge ok' : 'badge ghost';
+      return `<span class="${cls}">${esc(s)}</span>`;
+    }
+
+    async function loadKnowledgeDocs() {
+      const tbody = document.getElementById('kb-docs-body');
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-tertiary)">Loading...</td></tr>';
+      const params = new URLSearchParams({ limit: String(KB_PAGE_SIZE), offset: String(kbPage * KB_PAGE_SIZE) });
+      const search = document.getElementById('kb-search').value.trim();
+      if (search) params.set('search', search);
+      const docType = document.getElementById('kb-f-doctype').value;
+      if (docType) params.set('doc_type', docType);
+      const binding = document.getElementById('kb-f-binding').value;
+      if (binding) params.set('binding_level', binding);
+      const source = document.getElementById('kb-f-source').value;
+      if (source) params.set('source_type', source);
+      const sens = document.getElementById('kb-f-sensitivity').value;
+      if (sens) params.set('sensitivity', sens);
+      try {
+        const data = await api(API_BASE + '/knowledge/documents/ingested?' + params.toString());
+        kbDocs = data.documents || [];
+        kbTotal = data.total || 0;
+        paintKbDocs();
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--accent)">Error: ' + esc(e.message) + '</td></tr>';
+      }
+    }
+
+    function paintKbDocs() {
+      const tbody = document.getElementById('kb-docs-body');
+      const totalPages = Math.max(1, Math.ceil(kbTotal / KB_PAGE_SIZE));
+      if (!kbDocs.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-tertiary)">No ingested documents</td></tr>';
+      } else {
+        tbody.innerHTML = kbDocs.map((d, i) => {
+          const title = d.title || d.sourceFile;
+          const version = d.version
+            ? `<span style="background:var(--bg-tertiary);border-radius:6px;padding:0.1rem 0.4rem;font-size:0.8rem">v${esc(d.version)}</span>`
+            : '—';
+          return `<tr>
+            <td>${esc(title)}</td>
+            <td>${version}</td>
+            <td>${esc(d.docType || '—')}</td>
+            <td>${esc(d.bindingLevel || '—')}</td>
+            <td>${kbSensBadge(d.sensitivity)}</td>
+            <td>${esc(d.sourceType || '—')}</td>
+            <td>${d.chunkCount}</td>
+            <td>${d.createdAt ? new Date(d.createdAt).toLocaleString() : '—'}</td>
+            <td><button class="btn btn-sm" onclick="editKbDoc(${i})">Edit</button>
+                <button class="btn btn-sm btn-ghost-danger" onclick="delKbDoc(${i})">Delete</button></td>
+          </tr>`;
+        }).join('');
+      }
+      document.getElementById('kb-page-label').textContent = kbTotal ? ((kbPage + 1) + '/' + totalPages + ' · ' + kbTotal) : '0';
+      document.getElementById('kb-prev-btn').disabled = kbPage <= 0;
+      document.getElementById('kb-next-btn').disabled = (kbPage + 1) * KB_PAGE_SIZE >= kbTotal;
+    }
+
+    function kbPrevPage() { if (kbPage > 0) { kbPage--; loadKnowledgeDocs(); } }
+    function kbNextPage() { if ((kbPage + 1) * KB_PAGE_SIZE < kbTotal) { kbPage++; loadKnowledgeDocs(); } }
+    function clearKbFilters() {
+      document.getElementById('kb-search').value = '';
+      document.getElementById('kb-f-doctype').value = '';
+      document.getElementById('kb-f-binding').value = '';
+      document.getElementById('kb-f-source').value = '';
+      document.getElementById('kb-f-sensitivity').value = '';
+      kbPage = 0;
+      loadKnowledgeDocs();
+    }
+
+    function editKbDoc(i) {
+      const d = kbDocs[i]; if (!d) return;
+      kbEditIndex = i;
+      document.getElementById('kb-edit-file').textContent = 'File: ' + d.sourceFile;
+      document.getElementById('kb-m-title').value = d.title || '';
+      document.getElementById('kb-m-version').value = d.version || '';
+      setSelectValue('kb-m-doctype', d.docType || '');
+      setSelectValue('kb-m-binding', d.bindingLevel || '');
+      setSelectValue('kb-m-sensitivity', d.sensitivity || '');
+      setSelectValue('kb-m-source', d.sourceType || '');
+      document.getElementById('kb-edit-modal').style.display = 'flex';
+    }
+    function closeKbEdit() { document.getElementById('kb-edit-modal').style.display = 'none'; }
+
+    async function saveKbEdit() {
+      const d = kbDocs[kbEditIndex];
+      if (!d) { closeKbEdit(); return; }
+      const btn = document.getElementById('kb-m-save');
+      btn.disabled = true;
+      const body = {
+        title: document.getElementById('kb-m-title').value.trim(),
+        version: document.getElementById('kb-m-version').value.trim(),
+        doc_type: document.getElementById('kb-m-doctype').value,
+        binding_level: document.getElementById('kb-m-binding').value,
+        sensitivity: document.getElementById('kb-m-sensitivity').value,
+        source_type: document.getElementById('kb-m-source').value,
+      };
+      try {
+        const res = await fetch(API_BASE + '/knowledge/documents/' + encodeURIComponent(d.sourceFile) + '/metadata', {
+          method: 'PATCH', headers: authHeaders, body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Update failed');
+        showToast('Metadata tersimpan');
+        closeKbEdit();
+        loadKnowledgeDocs();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function delKbDoc(i) {
+      const d = kbDocs[i]; if (!d) return;
+      if (!confirm('Delete ' + d.chunkCount + ' chunk(s) dari "' + (d.title || d.sourceFile) + '"? Ini tidak bisa dibatalkan.')) return;
+      try {
+        const res = await fetch(API_BASE + '/knowledge/documents/' + encodeURIComponent(d.sourceFile), {
+          method: 'DELETE', headers: authHeaders,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Delete failed');
+        showToast('Dihapus (' + data.deletedChunks + ' chunk)');
+        if (kbDocs.length === 1 && kbPage > 0) kbPage--;
+        loadKnowledgeDocs();
+      } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+      }
+    }
+
+    // ─── Modal a11y: ESC + backdrop click close + focus return ─────────────
+    const MODAL_CLOSERS = {
+      'model-access-modal': 'closeModal',
+      'fb-detail-modal': 'closeFbDetail',
+      'kb-edit-modal': 'closeKbEdit',
+      'key-created-modal': 'closeKeyModal',
+    };
+    const OVERLAY_IDS = Object.keys(MODAL_CLOSERS);
+
+    // Remember the last element a user clicked — the likely dialog opener.
+    window._kbLastClick = null;
+    document.addEventListener('click', (e) => {
+      window._kbLastClick = e.target.closest('button, a, input, [role="button"]') || document.body;
+    }, true);
+
+    // When an overlay becomes visible, tag it with its opener (focus return target).
+    OVERLAY_IDS.forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const obs = new MutationObserver(() => {
+        if (el.style.display === 'flex') el._opener = window._kbLastClick;
+      });
+      obs.observe(el, { attributes: true, attributeFilter: ['style'] });
+    });
+
+    function closeOverlay(id) {
+      const el = document.getElementById(id);
+      const close = window[MODAL_CLOSERS[id]];
+      if (typeof close === 'function') close();
+      if (el && el._opener && el._opener.focus) el._opener.focus();
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      for (const id of OVERLAY_IDS) {
+        if (document.getElementById(id)?.style.display === 'flex') { closeOverlay(id); return; }
+      }
+    });
+
+    // Backdrop click (capture): only when the click target IS the overlay itself.
+    document.addEventListener('click', (e) => {
+      for (const id of OVERLAY_IDS) {
+        const el = document.getElementById(id);
+        if (el && e.target === el && el.style.display === 'flex') { closeOverlay(id); return; }
+      }
+    }, true);
 
     // Load cost report + config on first render
     setTimeout(loadCostReport, 100);

@@ -1,9 +1,40 @@
 import { Router, Request, Response } from 'express';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { OAuth2Client } from 'google-auth-library';
 import { login, loginWithGoogle, changePassword } from '../services/auth.service.js';
 import { authMiddleware } from '../middleware/auth.middleware.js';
 import { config } from '../config/index.js';
 import { ErrorResponse } from '../types/error.types.js';
 import { loginRateLimit } from '../middleware/security.middleware.js';
+import {
+  hasDriveToken,
+  storeRefreshToken,
+  deleteDriveToken,
+} from '../services/google-drive-token.service.js';
+
+/**
+ * Sign the Drive OAuth `state` so the callback can prove the code belongs to the
+ * user who started the flow. State = `<userId>.<HMAC-SHA256(userId, clientSecret)>`.
+ * The callback is unauthenticated — a bare userId as state would let an attacker
+ * write their own refresh token onto any account (login-CSRF). See /audit.
+ */
+function signDriveState(userId: string): string {
+  const sig = createHmac('sha256', config.google.clientSecret).update(userId).digest('base64url');
+  return `${userId}.${sig}`;
+}
+
+function verifyDriveState(state: string): string | null {
+  const dot = state.indexOf('.');
+  if (dot <= 0) return null;
+  const userId = state.slice(0, dot);
+  const sig = state.slice(dot + 1);
+  const expected = signDriveState(userId);
+  const actual = `${userId}.${sig}`;
+  const a = Buffer.from(actual);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  return userId;
+}
 
 /**
  * Auth routes — handles user authentication and password management.
@@ -167,6 +198,140 @@ router.post('/change-password', authMiddleware, async (req: Request, res: Respon
       message: 'An unexpected error occurred',
     };
     res.status(500).json(errorResponse);
+  }
+});
+
+/**
+ * GET /api/v1/auth/google-drive/status
+ * Check if the authenticated user has authorized Google Drive access.
+ */
+router.get('/google-drive/status', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  const user = req.user!;
+  try {
+    const authorized = await hasDriveToken(user.sub);
+    res.json({ authorized });
+  } catch {
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to check Drive authorization status' });
+  }
+});
+
+/**
+ * GET /api/v1/auth/google-drive/auth
+ * Get the Google OAuth URL for Drive authorization.
+ * Redirect the user to this URL in a popup window.
+ */
+router.get('/google-drive/auth', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  const user = req.user!;
+  const clientId = config.google.driveClientId || config.google.clientId;
+  if (!clientId || !config.google.clientSecret) {
+    res.status(500).json({ error: 'CONFIG_ERROR', message: 'Google Drive OAuth is not configured' });
+    return;
+  }
+
+  // Determine redirect URI from the request
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/auth/google-drive/callback`;
+
+  const oauth2Client = new OAuth2Client(clientId, config.google.clientSecret, redirectUri);
+  const authUrl = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: [
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/documents.readonly',
+      'https://www.googleapis.com/auth/spreadsheets.readonly',
+      'https://www.googleapis.com/auth/presentations.readonly',
+    ],
+    prompt: 'consent', // Force consent screen every time to ensure refresh_token is returned
+    state: signDriveState(user.sub), // signed userId — verified in callback (anti login-CSRF)
+  });
+
+  res.json({ authUrl });
+});
+
+/**
+ * GET /api/v1/auth/google-drive/callback
+ * OAuth callback — exchange code for tokens, store refresh_token.
+ * Serves a mini-page that posts a message to the opener window and closes.
+ */
+router.get('/google-drive/callback', async (req: Request, res: Response): Promise<void> => {
+  const { code, state } = req.query;
+
+  if (!code || typeof code !== 'string' || !state || typeof state !== 'string') {
+    res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Missing authorization code or state' });
+    return;
+  }
+
+  const userId = verifyDriveState(state);
+  if (!userId) {
+    res.status(400).json({ error: 'AUTH_ERROR', message: 'Invalid OAuth state — session tidak valid atau berubah' });
+    return;
+  }
+
+  const clientId = config.google.driveClientId || config.google.clientId;
+  if (!clientId || !config.google.clientSecret) {
+    res.status(500).json({ error: 'CONFIG_ERROR', message: 'Google Drive OAuth is not configured' });
+    return;
+  }
+
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/auth/google-drive/callback`;
+  const oauth2Client = new OAuth2Client(clientId, config.google.clientSecret, redirectUri);
+
+  try {
+    const { tokens } = await oauth2Client.getToken(code as string);
+
+    if (!tokens.refresh_token) {
+      // If no refresh_token returned (user already authorized before), retrieve existing
+      res.status(400).json({ error: 'AUTH_ERROR', message: 'No refresh token returned. Please revoke access in Google Account and try again.' });
+      return;
+    }
+
+    // Extract email from id_token if available
+    let googleEmail = '';
+    if (tokens.id_token) {
+      const ticket = await oauth2Client.verifyIdToken({ idToken: tokens.id_token, audience: clientId });
+      const payload = ticket.getPayload();
+      googleEmail = payload?.email || '';
+    }
+
+    await storeRefreshToken(
+      userId,
+      tokens.refresh_token,
+      googleEmail,
+      tokens.scope?.split(' ') || [
+        'https://www.googleapis.com/auth/drive.readonly',
+        'https://www.googleapis.com/auth/documents.readonly',
+        'https://www.googleapis.com/auth/spreadsheets.readonly',
+        'https://www.googleapis.com/auth/presentations.readonly',
+      ],
+    );
+
+    // Serve mini-page that notifies the opener and closes
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html><body><script>
+  if (window.opener) {
+    window.opener.postMessage({ type: 'gd_auth_complete' }, '*');
+    window.close();
+  } else {
+    document.write('Akses Google Drive berhasil. Silakan tutup jendela ini dan kembali ke chat.');
+  }
+</script></body></html>`);
+  } catch (err: unknown) {
+    console.error('[google-drive/callback] Token exchange failed:', (err as Error).message);
+    res.status(500).json({ error: 'TOKEN_EXCHANGE_FAILED', message: 'Gagal mendapatkan token akses Google Drive' });
+  }
+});
+
+/**
+ * DELETE /api/v1/auth/google-drive/revoke
+ * Revoke user's Google Drive access.
+ */
+router.delete('/google-drive/revoke', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  const user = req.user!;
+  try {
+    await deleteDriveToken(user.sub);
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to revoke Drive access' });
   }
 });
 

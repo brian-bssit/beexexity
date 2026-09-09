@@ -22,9 +22,7 @@ export interface AuditEntry {
 
   // Routing metadata fields
   routingState?: 'auto' | 'manual' | 'passthrough';
-  complexityScore?: number;
   routingReasonCode?: string;
-  reasoningSummary?: string;
   executedModelId?: string;
   manualOverrideApplied?: boolean;
   modalityFlags?: { textOnly: boolean; documentText: boolean; image: boolean; mixed: boolean };
@@ -43,34 +41,8 @@ export interface AuditEntry {
   // Pricing snapshot for historical cost accuracy
   modelPricingSnapshot?: Record<string, number> | null;
 
-  // Sub-agent orchestration metadata (only present when orchestrator runs)
-  orchestrationMeta?: {
-    specs: Array<{ agentId: string; skill: string; prompt: string; targetModel?: string }>;
-    results: Array<{
-      agentId: string;
-      status: 'success' | 'failed' | 'timeout';
-      text: string;
-      inputTokens: number;
-      outputTokens: number;
-      durationMs: number;
-    }>;
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    plannerDurationMs: number;
-    executeDurationMs: number;
-    synthesisDurationMs: number;
-    synthesizeUsed: boolean;
-    summarizeTriggered: boolean;
-  };
-
-  // Routing context from the PromptContract
-  routingContext?: string;
-  routingIntent?: string;
+  // Short routing summary for the session list preview
   sessionContext?: string;
-
-  // Sequential reasoning orchestration fields
-  orchestrationGroupId?: string;
-  orchestrationStepOrder?: number;
 
   // Billing context for machine-to-machine batch inference
   billedUserId?: string;
@@ -90,4 +62,23 @@ export interface AuditEntry {
 
   // Cohere Embed v4 usage — input tokens consumed by knowledge retrieval
   embeddingInputTokens?: number;
+
+  // Tier-1 tool loop traceability — one entry per executed tool call.
+  // Args are masked at write time; raw query/result content is never stored.
+  toolCallsMeta?: ToolCallAuditMeta[];
+
+  // Google Drive fetch audit (stored in orchestration_meta JSONB column).
+  orchestrationMeta?: Record<string, unknown>;
+}
+
+/** One executed Tier-1 tool call, captured for audit (metadata only). */
+export interface ToolCallAuditMeta {
+  tool: string;
+  /** PII-masked JSON of the tool args (masked before storage — raw never persisted). */
+  args_masked: string;
+  duration_ms: number;
+  /** Number of knowledge chunks the tool returned (derived from the result text). */
+  result_chunks: number;
+  /** Character size of the tool result text. */
+  result_size: number;
 }

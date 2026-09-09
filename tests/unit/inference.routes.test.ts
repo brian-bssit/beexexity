@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { inferenceRouter, activeTurns } from '../../src/routes/inference.routes.js';
+import { inferenceRouter, activeTurns, buildGroundingClause } from '../../src/routes/inference.routes.js';
 
 // Mock dependencies
 vi.mock('../../src/middleware/auth.middleware.js', () => ({
@@ -187,7 +187,10 @@ vi.mock('../../src/services/routing-engine.service.js', () => ({
     manualOverrideApplied: false,
     flags: [],
   }),
-  getDefaultFormatTemplate: vi.fn().mockReturnValue(null),
+}));
+
+vi.mock('../../src/services/url-interceptor.service.js', () => ({
+  interceptUrls: vi.fn(),
 }));
 
 vi.mock('../../src/services/upload-validator.service.js', () => ({
@@ -214,6 +217,11 @@ vi.mock('../../src/services/content-builder.service.js', () => ({
 import { mask } from '../../src/services/pii-masker.service.js';
 import { generate, validateModelId, InferenceError } from '../../src/services/inference.service.js';
 import { auditService } from '../../src/services/audit.service.js';
+import { interceptUrls } from '../../src/services/url-interceptor.service.js';
+import {
+  GoogleDriveNotAuthorizedError,
+  GoogleDriveTokenRevokedError,
+} from '../../src/services/google-drive-token.service.js';
 
 /**
  * Helper to send HTTP requests to the test server.
@@ -380,6 +388,73 @@ describe('Inference Routes — POST /api/v1/inference/generate', () => {
     });
   });
 
+  describe('Google Workspace URL Integration', () => {
+    const GWS_PROMPT = 'baca https://docs.google.com/document/d/abcdefghijk';
+
+    it('returns 401 JSON GOOGLE_DRIVE_NOT_AUTHORIZED (no token) before SSE setup', async () => {
+      vi.mocked(interceptUrls).mockRejectedValueOnce(new GoogleDriveNotAuthorizedError());
+
+      const res = await makeRequest(server, '/api/v1/inference/generate', { prompt: GWS_PROMPT });
+
+      expect(interceptUrls).toHaveBeenCalledWith(GWS_PROMPT, 'user-123');
+      expect(res.statusCode).toBe(401);
+      expect(res.headers['content-type']).not.toContain('text/event-stream');
+      expect(JSON.parse(res.body).error).toBe('GOOGLE_DRIVE_NOT_AUTHORIZED');
+    });
+
+    it('returns 401 JSON GOOGLE_DRIVE_TOKEN_REVOKED when refresh fails', async () => {
+      vi.mocked(interceptUrls).mockRejectedValueOnce(new GoogleDriveTokenRevokedError());
+
+      const res = await makeRequest(server, '/api/v1/inference/generate', { prompt: GWS_PROMPT });
+
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.body).error).toBe('GOOGLE_DRIVE_TOKEN_REVOKED');
+    });
+
+    it('returns mapped Drive API error as JSON (403 access denied)', async () => {
+      const driveErr = Object.assign(
+        new Error('Anda tidak memiliki akses ke dokumen ini'),
+        { code: 'GOOGLE_DRIVE_ACCESS_DENIED', statusCode: 403 },
+      );
+      vi.mocked(interceptUrls).mockRejectedValueOnce(driveErr);
+
+      const res = await makeRequest(server, '/api/v1/inference/generate', { prompt: GWS_PROMPT });
+
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe('GOOGLE_DRIVE_ACCESS_DENIED');
+      expect(body.message).toBe('Anda tidak memiliki akses ke dokumen ini');
+    });
+
+    it('streams SSE on successful GWS fetch and audits gdrive_fetch', async () => {
+      vi.mocked(interceptUrls).mockResolvedValueOnce({
+        cleanedPrompt: 'baca [Google Document: Laporan]',
+        extractedDocumentText: 'Isi laporan keuangan kuartal III',
+        documentTitle: 'Laporan',
+        fileId: 'abcdefghijk',
+        mimeType: 'application/vnd.google-apps.document',
+      });
+
+      const res = await makeRequest(server, '/api/v1/inference/generate', { prompt: GWS_PROMPT });
+
+      expect(res.headers['content-type']).toContain('text/event-stream');
+      expect(res.body).toContain('event: session');
+      expect(res.body).toContain('event: done');
+      // Document text masked separately from the (URL-replaced) prompt (FR-4)
+      expect(mask).toHaveBeenCalledWith('Isi laporan keuangan kuartal III');
+      // Audit trail carries the Drive fetch record (FR-5)
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orchestrationMeta: expect.objectContaining({
+            action: 'gdrive_fetch',
+            fileId: 'abcdefghijk',
+            success: true,
+          }),
+        }),
+      );
+    });
+  });
+
   describe('Error Handling', () => {
     it('should send SSE error event on inference error', async () => {
       vi.mocked(generate).mockRejectedValueOnce(
@@ -401,5 +476,28 @@ describe('Inference Routes — POST /api/v1/inference/generate', () => {
       expect(res.body).toContain('event: error');
       expect(res.body).toContain('UNKNOWN');
     });
+  });
+});
+
+describe('buildGroundingClause', () => {
+  it('anchors internal doc turns to provided material (default clause)', () => {
+    const clause = buildGroundingClause({ tier1ToolsOn: false, sovereignTier3: false });
+    expect(clause).toContain('base your answer strictly on that material');
+    expect(clause).toContain('tidak tersedia dalam dokumen yang diberikan');
+  });
+
+  it('keeps the tool-aware clause for Tier-1 tool turns', () => {
+    const clause = buildGroundingClause({ tier1ToolsOn: true, sovereignTier3: false });
+    expect(clause).toContain('search_internal_knowledge');
+    expect(clause).not.toContain('tidak tersedia dalam dokumen yang diberikan');
+  });
+
+  it('does NOT leak the internal doc-refusal clause to a sovereign-tier-3 external call', () => {
+    const clause = buildGroundingClause({ tier1ToolsOn: false, sovereignTier3: true });
+    expect(clause).not.toContain('tidak tersedia dalam dokumen yang diberikan');
+    expect(clause).not.toContain('base your answer strictly on that material');
+    // External model answers as a general assistant (e.g. live exchange-rate questions).
+    expect(clause).toContain('answer from your own general');
+    expect(clause).toContain('real-time data');
   });
 });

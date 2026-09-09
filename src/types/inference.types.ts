@@ -58,27 +58,15 @@ export interface ModalityFlags {
 }
 
 export interface RoutingMetadataEvent {
-  refinedPrompt?: string;
-  complexityScore?: number;
-  scoreBand?: string;
   routingState: 'auto' | 'manual' | 'passthrough';
   executedModelId: string;
-  routingReasonCode: string;
-  reasoningSummary: string;
+  routingReasonCode: string;        // e.g. 'auto-fixed-model' | 'auto-access-denied' | 'passthrough'
   modalityFlags?: ModalityFlags;
   manualOverrideApplied: boolean;
-  skill?: string;  // classified request type from hybrid router
-  contract?: Record<string, unknown> | null;  // structured prompt contract
-
-  // Confidence & flags from routing decision
-  confidence?: number;
   flags?: string[];
 
-  // Routing engine timing (ms per step)
+  // Routing decision timing (ms)
   routingDurationMs?: number;
-  classificationDurationMs?: number;
-  refinementDurationMs?: number;
-  scoringDurationMs?: number;
 
   // Prompt info
   originalPromptLength?: number;
@@ -99,76 +87,4 @@ export interface RoutingMetadataEvent {
   ocrExecuted?: boolean;
   ocrModel?: string;
   enhanceModel?: string;
-
-  // Raw LLM call data for debugging (routeRequest internals)
-  _classificationRaw?: string;   // Raw response from unifiedClassifyAndScore
-  _classificationPrompt?: string; // Prompt sent to classifier
-  _refinementRaw?: string;        // Raw response from refinePrompt
-  _refinementPrompt?: string;     // Prompt sent to refiner
-}
-
-// ── Sequential Reasoning ───────────────────────────────────────────────
-
-export interface SequentialStep {
-  order: number;          // 1-indexed
-  name: string;
-  description: string;
-  systemPrompt: string;   // Full step prompt for Bedrock
-  modelId: string;
-}
-
-export interface SequentialPlan {
-  steps: SequentialStep[];
-  reasoning: string;       // Why this plan was chosen
-}
-
-export interface StepResult {
-  order: number;
-  status: 'success' | 'failed' | 'skipped';
-  inputTokens: number;
-  outputTokens: number;
-  durationMs: number;
-  retryCount: number;
-  errorMessage?: string;
-}
-
-export interface SequentialOrchestrationMeta {
-  plan: { steps: { name: string; description: string }[] };
-  stepResults: StepResult[];
-  synthesisStatus: 'success' | 'partial' | 'failed';
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalDurationMs: number;
-}
-
-// SSE event payloads for orchestration
-export interface OrchestrationPlanEvent {
-  steps: { order: number; name: string; description: string }[];
-  reasoning: string;
-}
-
-export interface OrchestrationStatusEvent {
-  step: number;
-  total: number;
-  name: string;
-  description: string;
-  status: 'running' | 'completed' | 'failed';
-  durationMs?: number;
-}
-
-export interface OrchestrationStepEvent {
-  step: number;
-  content: string;        // Streaming token fragment
-}
-
-export interface OrchestrationInterimEvent {
-  step: number;
-  total: number;
-  insight: string;        // Partial synthesis of findings so far
-}
-
-export interface OrchestrationErrorEvent {
-  step: number;
-  name: string;
-  reason: string;
 }

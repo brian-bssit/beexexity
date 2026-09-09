@@ -51,6 +51,16 @@
       "displayName": "Cohere Embed v4 (knowledge retrieval)",
       "inputPricePer1MTokens": 0.12,
       "outputPricePer1MTokens": 0
+    },
+    "qwen3.7-flash-2026-07-15": {
+      "displayName": "Qwen3.7 Flash",
+      "inputPricePer1MTokens": 0.05,
+      "outputPricePer1MTokens": 0.15
+    },
+    "MiniMax-M2.7-highspeed": {
+      "displayName": "MiniMax M2.7 Highspeed",
+      "inputPricePer1MTokens": 0.30,
+      "outputPricePer1MTokens": 1.20
     }
   }
 }

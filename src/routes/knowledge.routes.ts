@@ -5,13 +5,26 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { authMiddleware, apiKeyAuthMiddleware } from '../middleware/auth.middleware.js';
+import { adminMiddleware } from '../middleware/admin.middleware.js';
 import { knowledgeUploadMiddleware, multerErrorHandler } from '../middleware/upload.middleware.js';
 import { query } from '../config/database.js';
 import { ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { bedrockClient } from '../services/inference.service.js';
 import { extractDocumentText } from '../services/document-extractor.service.js';
-import { indexDocument } from '../services/knowledge.service.js';
-import type { IndexDocumentParams } from '../types/knowledge.types.js';
+import {
+  indexDocument,
+  getIngestedDocuments,
+  updateDocumentMetadata,
+  deleteDocumentBySourceFile,
+} from '../services/knowledge.service.js';
+import {
+  DOC_TYPES,
+  BINDING_LEVELS,
+  SOURCE_TYPES,
+  SENSITIVITIES,
+  type IndexDocumentParams,
+} from '../types/knowledge.types.js';
+import type { DocumentMetadataUpdate } from '../services/knowledge.service.js';
 
 const router = Router();
 
@@ -225,6 +238,117 @@ router.get('/documents/:id/status', eitherAuth, async (req: Request, res: Respon
   } catch (err: unknown) {
     console.error('[knowledge] status query failed:', (err as Error).message);
     res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to load ingestion status' });
+  }
+});
+
+/* ─── Admin management (JWT admin only — NOT eitherAuth; apiKey role is blocked) ─── */
+
+/** Enum fields writable via PATCH → allowed CHECK values (single source: knowledge.types.ts). */
+const ENUM_FIELDS: Array<[wire: string, key: keyof DocumentMetadataUpdate, allowed: readonly string[]]> = [
+  ['doc_type', 'docType', DOC_TYPES],
+  ['binding_level', 'bindingLevel', BINDING_LEVELS],
+  ['source_type', 'sourceType', SOURCE_TYPES],
+  ['sensitivity', 'sensitivity', SENSITIVITIES],
+];
+
+/**
+ * GET /api/v1/knowledge/documents/ingested
+ * Admin-only: list ingested documents grouped by source_file, with search + filters.
+ * Query: search, doc_type, binding_level, sensitivity, source_type, limit (default 50), offset.
+ * Returns { documents: [...], total }.
+ */
+router.get('/documents/ingested', authMiddleware, adminMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit), 10) || 50));
+    const offset = Math.max(0, parseInt(String(req.query.offset), 10) || 0);
+    const { documents, total } = await getIngestedDocuments(
+      {
+        search: typeof req.query.search === 'string' && req.query.search.trim()
+          ? req.query.search.trim() : null,
+        docType: typeof req.query.doc_type === 'string' ? req.query.doc_type : null,
+        bindingLevel: typeof req.query.binding_level === 'string' ? req.query.binding_level : null,
+        sensitivity: typeof req.query.sensitivity === 'string' ? req.query.sensitivity : null,
+        sourceType: typeof req.query.source_type === 'string' ? req.query.source_type : null,
+      },
+      limit,
+      offset,
+    );
+    res.json({ documents, total });
+  } catch (err: unknown) {
+    console.error('[knowledge] ingested list failed:', (err as Error).message);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to list ingested documents' });
+  }
+});
+
+/**
+ * PATCH /api/v1/knowledge/documents/:sourceFile/metadata
+ * Admin-only: update document-level metadata, cascading to every chunk of sourceFile.
+ * Body (all optional): title, version, doc_type, binding_level, source_type, sensitivity.
+ * Empty-string version is treated as absent (never overwrites). Enum values validated → 400.
+ */
+router.patch('/documents/:sourceFile/metadata', authMiddleware, adminMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const sourceFile = req.params.sourceFile;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (!sourceFile || typeof sourceFile !== 'string' || !sourceFile.trim()) {
+      res.status(400).json({ error: 'VALIDATION_ERROR', message: 'sourceFile is required' });
+      return;
+    }
+
+    const update: DocumentMetadataUpdate = {};
+    if (typeof body.title === 'string' && body.title.trim()) update.title = body.title.trim();
+    if (typeof body.version === 'string' && body.version !== '') update.version = body.version.trim();
+
+    for (const [wire, key, allowed] of ENUM_FIELDS) {
+      const raw = body[wire];
+      if (raw === undefined || raw === null) continue;
+      const value = typeof raw === 'string'
+        ? (wire === 'doc_type' ? raw.trim().toUpperCase() : raw.trim())
+        : '';
+      if (!value) continue; // empty → leave unchanged (nullable enum column)
+      if (!allowed.includes(value)) {
+        res.status(400).json({
+          error: 'VALIDATION_ERROR',
+          message: `${wire} must be one of: ${allowed.join(', ')}`,
+        });
+        return;
+      }
+      update[key] = value;
+    }
+
+    const updatedChunks = await updateDocumentMetadata(sourceFile.trim(), update);
+    if (updatedChunks === 0) {
+      res.status(404).json({ error: 'NOT_FOUND', message: 'No chunks found for source_file' });
+      return;
+    }
+    res.json({ success: true, updatedChunks });
+  } catch (err: unknown) {
+    console.error('[knowledge] metadata update failed:', (err as Error).message);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to update document metadata' });
+  }
+});
+
+/**
+ * DELETE /api/v1/knowledge/documents/:sourceFile
+ * Admin-only: delete every chunk belonging to sourceFile.
+ * Ingestion job history rows are intentionally untouched (historical records).
+ */
+router.delete('/documents/:sourceFile', authMiddleware, adminMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const sourceFile = req.params.sourceFile;
+    if (!sourceFile || typeof sourceFile !== 'string' || !sourceFile.trim()) {
+      res.status(400).json({ error: 'VALIDATION_ERROR', message: 'sourceFile is required' });
+      return;
+    }
+    const deletedChunks = await deleteDocumentBySourceFile(sourceFile.trim());
+    if (deletedChunks === 0) {
+      res.status(404).json({ error: 'NOT_FOUND', message: 'No chunks found for source_file' });
+      return;
+    }
+    res.json({ success: true, deletedChunks });
+  } catch (err: unknown) {
+    console.error('[knowledge] delete failed:', (err as Error).message);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to delete document' });
   }
 });
 
