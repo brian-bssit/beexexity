@@ -22,6 +22,12 @@ export type SkillType = 'fallback';
 export interface RoutingInput {
   originalPrompt: string;           // Already PII-masked
   maskedDocumentText?: string;      // Extracted + masked doc text
+  /**
+   * True when `maskedDocumentText` came from the session's sticky internal document
+   * (a Google Workspace doc fetched on an earlier turn) rather than this turn's fetch.
+   * Audit-only signal — Tier-3 is blocked either way.
+   */
+  documentTextFromSession?: boolean;
   hasImages: boolean;
   imageModelRequired: boolean;
   routingState: 'auto' | 'manual' | 'passthrough';

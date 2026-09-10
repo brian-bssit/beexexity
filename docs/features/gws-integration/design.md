@@ -237,3 +237,15 @@ Folder links (`drive.google.com/drive/folders/{id}`, incl. `/drive/u/{n}/folders
 - **Assembly:** documents joined under `===== n. {name} =====` into a single `DriveFolderResult` (`DriveFolderResult extends DriveFetchResult`, `+fileCount`). `title` = folder name, `mimeType` = `application/vnd.google-apps.folder`.
 - **Downstream unchanged:** `interceptUrls` dispatches on `type === 'folder'`; the caller still receives one `extractedDocumentText` blob. No changes in `inference.routes.ts`.
 - **Timeout:** a fresh `AbortSignal.timeout(driveTimeoutMs)` per request — a shared signal would abort the whole crawl once the first request's deadline elapsed.
+
+---
+
+## Addendum: Sticky session document context (2026-09-10)
+
+A fetched GWS document is internal material, but the text previously lived only in the turn that carried the URL. A follow-up turn therefore had **no** document signal: `selectAutoModel` saw `documentText === undefined`, set `tier3-candidate`, and an empty knowledge retrieval escalated the conversation to the external Tier-3 gateway. It was also answered without the document content.
+
+- **Storage:** migration 036 adds `sessions.internal_document_context` / `internal_document_title`. Written by `setInternalDocumentContext()` on the fetching turn with the **masked** extraction, sliced to 50k (same cap as the system-prompt injection); failures are logged, never fatal.
+- **Read-back:** every turn computes `effectiveDocumentText = maskedDocumentText ?? session.internal_document_context`, plus `documentTextFromSession` (true only when the fallback is used).
+- **Routing:** `RoutingInput.maskedDocumentText` receives the effective text → `AutoModelContext.documentText` is set → `tier3-candidate` is never emitted, and `classifySovereignTier` keeps scanning the document for PII/restricted terms on later turns. New audit flag: `sovereign-internal-document`.
+- **Prompt:** the same text feeds the `[Dokumen Google Drive: …]` system-prompt section, so follow-ups can answer about it. The section now injects the **masked** text (it previously used the raw extraction).
+- **Semantics:** sticky for the session; a later turn pasting a new document replaces the stored context. Rows are removed with the session by normal expiry cleanup.

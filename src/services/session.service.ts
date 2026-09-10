@@ -42,6 +42,8 @@ interface SessionRow {
   updated_at: string;
   last_activity_at: string;
   expires_at: string;
+  internal_document_context?: string | null;
+  internal_document_title?: string | null;
 }
 
 /**
@@ -69,6 +71,8 @@ function mapSessionRow(row: SessionRow): Session {
     updatedAt: row.updated_at,
     lastActivityAt: row.last_activity_at,
     expiresAt: row.expires_at,
+    internalDocumentContext: row.internal_document_context ?? undefined,
+    internalDocumentTitle: row.internal_document_title ?? undefined,
   };
 }
 
@@ -105,6 +109,29 @@ export async function touchSession(sessionId: string): Promise<void> {
 }
 
 /**
+ * Persist the PII-masked text of a Google Workspace document fetched in this session.
+ * Sticky: every later turn reads it back as internal context, so the conversation can
+ * never escalate to the external Tier-3 gateway and follow-ups still see the document.
+ * `text` must already be masked — this column is the same posture as stored messages.
+ */
+export async function setInternalDocumentContext(
+  sessionId: string,
+  text: string,
+  title?: string,
+): Promise<void> {
+  try {
+    await query(
+      `UPDATE sessions SET internal_document_context = $2, internal_document_title = $3 WHERE id = $1`,
+      [sessionId, text, title ?? null],
+    );
+  } catch (err: unknown) {
+    // Non-fatal: the current turn still has the document in hand. Losing the sticky
+    // context degrades later turns (they may escalate) — surface it in logs.
+    console.error('[session] Failed to persist internal document context:', (err as Error).message);
+  }
+}
+
+/**
  * Retrieve or create a session for the given user.
  *
  * If sessionId is provided and refers to an active, non-expired session owned
@@ -118,7 +145,7 @@ export async function getOrCreateSession(userId: string, sessionId?: string): Pr
   // Attempt to retrieve the provided session if an ID was given
   if (sessionId) {
     const result = await query<SessionRow>(
-      `SELECT id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at
+      `SELECT id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at, internal_document_context, internal_document_title
        FROM sessions WHERE id = $1`,
       [sessionId],
     );
@@ -139,7 +166,7 @@ export async function getOrCreateSession(userId: string, sessionId?: string): Pr
   const createResult = await query<SessionRow>(
     `INSERT INTO sessions (user_id, status, expires_at)
      VALUES ($1, 'active', NOW() + INTERVAL '1 hour' * $2)
-     RETURNING id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at`,
+     RETURNING id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at, internal_document_context, internal_document_title`,
     [userId, expiryHours],
   );
 
@@ -152,7 +179,7 @@ export async function getOrCreateSession(userId: string, sessionId?: string): Pr
  */
 export async function getActiveSession(userId: string): Promise<Session | null> {
   const result = await query<SessionRow>(
-    `SELECT id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at
+    `SELECT id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at, internal_document_context, internal_document_title
      FROM sessions
      WHERE user_id = $1 AND status = 'active'
      ORDER BY last_activity_at DESC
@@ -262,7 +289,7 @@ export async function markSessionInactive(sessionId: string): Promise<void> {
  */
 export async function getSessionById(userId: string, sessionId: string): Promise<Session | null> {
   const result = await query<SessionRow>(
-    `SELECT id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at
+    `SELECT id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at, internal_document_context, internal_document_title
      FROM sessions WHERE id = $1`,
     [sessionId],
   );
@@ -312,7 +339,7 @@ export async function getValidatedSession(
 
   // Fetch the session by ID
   const result = await query<SessionRow>(
-    `SELECT id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at
+    `SELECT id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at, internal_document_context, internal_document_title
      FROM sessions WHERE id = $1`,
     [sessionId],
   );
@@ -568,7 +595,7 @@ export async function resumeSession(userId: string, sessionId: string): Promise<
          expires_at = NOW() + INTERVAL '1 hour' * $2,
          updated_at = NOW()
      WHERE id = $3 AND user_id = $1
-     RETURNING id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at`,
+     RETURNING id, user_id, status, turn_count, created_at, updated_at, last_activity_at, expires_at, internal_document_context, internal_document_title`,
     [userId, expiryHours, sessionId],
   );
 

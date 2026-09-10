@@ -113,6 +113,31 @@ describe('classifySovereignTier → selectAutoModel', () => {
     expect(mockedGetDefaultTier3Model).not.toHaveBeenCalled();
   });
 
+  it('session-carried internal document blocks the candidate and flags it', async () => {
+    setGateway(true, 'MiniMax-M2.7-highspeed');
+    const sel = await selectAutoModel({
+      userId: 'u1', hasImages: false, prompt: 'apa kesimpulannya?',
+      documentText: 'isi dokumen internal', documentTextFromSession: true,
+    });
+    expect(sel.reasonCode).toBe('auto-fixed-model');
+    expect(sel.flags).toContain('sovereign-internal-document');
+    expect(sel.flags).not.toContain('tier3-candidate');
+    expect(mockedGetDefaultTier3Model).not.toHaveBeenCalled();
+  });
+
+  it('a follow-up turn carrying the session document never becomes a Tier-3 candidate', async () => {
+    setGateway(true, 'MiniMax-M2.7-highspeed');
+    const d = await routeRequest(makeInput({
+      originalPrompt: 'ringkas poin utamanya',
+      maskedDocumentText: 'isi dokumen internal',
+      documentTextFromSession: true,
+    }));
+    expect(d.flags).not.toContain('tier3-candidate');
+    expect(d.flags).toContain('sovereign-internal-document');
+    expect(d.modalityFlags.documentText).toBe(true);
+    expect(d.modalityFlags.textOnly).toBe(false);
+  });
+
   it('gateway on but no default model → no candidate', async () => {
     setGateway(true, null);
     const sel = await selectAutoModel({ userId: 'u1', hasImages: false, prompt: 'y' });

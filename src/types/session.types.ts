@@ -15,6 +15,13 @@ export interface Session {
   updatedAt: string;
   lastActivityAt: string;
   expiresAt: string;
+  /**
+   * PII-masked text of a Google Workspace document fetched earlier in this session.
+   * Sticky internal context: while set, the session never escalates to external Tier-3
+   * and the document is injected into every subsequent turn's system prompt.
+   */
+  internalDocumentContext?: string;
+  internalDocumentTitle?: string;
 }
 
 export interface StorageFlags {

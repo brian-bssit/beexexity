@@ -134,6 +134,7 @@ vi.mock('../../src/services/session.service.js', () => ({
     storageFlags: { piiMasked: true },
   }),
   markSessionInactive: vi.fn().mockResolvedValue(undefined),
+  setInternalDocumentContext: vi.fn().mockResolvedValue(undefined),
   transitionToDegraded: vi.fn().mockResolvedValue(undefined),
   incrementTurnCount: vi.fn().mockResolvedValue(undefined),
   SessionExpiredError: class SessionExpiredError extends Error {
@@ -222,6 +223,8 @@ import {
   GoogleDriveNotAuthorizedError,
   GoogleDriveTokenRevokedError,
 } from '../../src/services/google-drive-token.service.js';
+import { getValidatedSession, setInternalDocumentContext } from '../../src/services/session.service.js';
+import { routeRequest } from '../../src/services/routing-engine.service.js';
 
 /**
  * Helper to send HTTP requests to the test server.
@@ -499,5 +502,59 @@ describe('buildGroundingClause', () => {
     // External model answers as a general assistant (e.g. live exchange-rate questions).
     expect(clause).toContain('answer from your own general');
     expect(clause).toContain('real-time data');
+  });
+});
+
+describe('Sticky internal Google Workspace document context', () => {
+  let server: http.Server;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    activeTurns.clear();
+    server = createApp().listen(0);
+  });
+
+  afterEach(() => {
+    server.close();
+  });
+
+  it('persists the masked document as session context on the fetching turn', async () => {
+    vi.mocked(interceptUrls).mockResolvedValueOnce({
+      cleanedPrompt: 'baca [Google Document: Laporan]',
+      extractedDocumentText: 'Isi laporan kuartal III',
+      documentTitle: 'Laporan',
+      fileId: 'abcdefghijk',
+      mimeType: 'application/vnd.google-apps.document',
+    });
+
+    await makeRequest(server, '/api/v1/inference/generate', {
+      prompt: 'baca https://docs.google.com/document/d/abcdefghijk',
+    });
+
+    expect(setInternalDocumentContext).toHaveBeenCalledWith('session-123', 'Isi laporan kuartal III', 'Laporan');
+  });
+
+  it('reuses the session document on a follow-up turn with no URL', async () => {
+    vi.mocked(getValidatedSession).mockResolvedValueOnce({
+      id: 'session-123',
+      userId: 'user-123',
+      status: 'active',
+      turnCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 86400000).toISOString(),
+      internalDocumentContext: 'Isi laporan kuartal III',
+      internalDocumentTitle: 'Laporan',
+    });
+
+    await makeRequest(server, '/api/v1/inference/generate', { prompt: 'apa kesimpulannya?' });
+
+    // The routing input carries the stored document → tier3-candidate is never set.
+    const routingInput = vi.mocked(routeRequest).mock.calls.at(-1)![0];
+    expect(routingInput.maskedDocumentText).toBe('Isi laporan kuartal III');
+    expect(routingInput.documentTextFromSession).toBe(true);
+    // No fetch this turn → nothing re-persisted.
+    expect(setInternalDocumentContext).not.toHaveBeenCalled();
   });
 });

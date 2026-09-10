@@ -23,6 +23,7 @@ import {
   incrementTurnCount,
   SessionExpiredError,
   SessionNotFoundError,
+  setInternalDocumentContext,
 } from '../services/session.service.js';
 import { buildContext, buildKnowledgeSection } from '../services/context-assembly.service.js';
 import type { ContextConfig } from '../services/context-assembly.service.js';
@@ -549,9 +550,14 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
 
   // 5. Validate session — catch SessionExpiredError / SessionNotFoundError
   let sessionId: string;
+  // Sticky internal document context carried by the session (set on an earlier WGS fetch).
+  let sessionInternalDocumentContext: string | undefined;
+  let sessionInternalDocumentTitle: string | undefined;
   try {
     const session = await getValidatedSession(user.sub, req.body.sessionId);
     sessionId = session.id;
+    sessionInternalDocumentContext = session.internalDocumentContext;
+    sessionInternalDocumentTitle = session.internalDocumentTitle;
   } catch (sessionError: unknown) {
     if (sessionError instanceof SessionExpiredError) {
       // Set SSE headers and emit error event
@@ -591,6 +597,16 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
   }
 
   try {
+    // 6b. Sticky internal document context. A Google Workspace document fetched this turn
+    // becomes session state, so later turns (which carry no URL) stay internal — never a
+    // Tier-3 candidate — and still receive the document content.
+    if (maskedDocumentText) {
+      await setInternalDocumentContext(sessionId, maskedDocumentText.slice(0, 50000), documentTitle);
+    }
+    // Prefer this turn's fetch; else fall back to the document stored by an earlier turn.
+    const effectiveDocumentText = maskedDocumentText ?? sessionInternalDocumentContext;
+    const documentTextFromSession = !maskedDocumentText && !!sessionInternalDocumentContext;
+
     // 7. Store user message — FAIL-FAST: if it throws, do NOT call AI
     try {
       await storeMessage(sessionId, 'user', maskedPrompt, { piiMasked: true });
@@ -646,7 +662,7 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         refinedPrompt: maskedPrompt,
         routingReasonCode: 'passthrough',
         reasoningSummary: 'Passthrough mode — raw prompt, no routing',
-        modalityFlags: { textOnly: !extractedDocumentText, documentText: !!extractedDocumentText, image: false, mixed: false },
+        modalityFlags: { textOnly: !effectiveDocumentText, documentText: !!effectiveDocumentText, image: false, mixed: false },
         manualOverrideApplied: false,
         passthrough: true,
         flags: ['passthrough'],
@@ -666,7 +682,8 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         userId: user.sub,
         piiDetected,
         conversationContext,
-        maskedDocumentText,
+        maskedDocumentText: effectiveDocumentText,
+        documentTextFromSession,
       };
 
       try {
@@ -690,7 +707,7 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
           refinedPrompt: maskedPrompt,
           routingReasonCode: 'routing-fallback',
           reasoningSummary: 'Routing engine failed, using default model',
-          modalityFlags: { textOnly: !extractedDocumentText, documentText: !!extractedDocumentText, image: false, mixed: false },
+          modalityFlags: { textOnly: !effectiveDocumentText, documentText: !!effectiveDocumentText, image: false, mixed: false },
           manualOverrideApplied: false,
           flags: ['routing-fallback'],
           skill: 'fallback',
@@ -707,7 +724,7 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         refinedPrompt: maskedPrompt,
         routingReasonCode: 'manual-override',
         reasoningSummary: `Manual routing: user selected model ${validatedModelId}`,
-        modalityFlags: { textOnly: !extractedDocumentText, documentText: !!extractedDocumentText, image: false, mixed: false },
+        modalityFlags: { textOnly: !effectiveDocumentText, documentText: !!effectiveDocumentText, image: false, mixed: false },
         manualOverrideApplied: true,
         flags: [],
         skill: 'fallback',
@@ -849,8 +866,9 @@ async function handleJsonInference(req: Request, res: Response): Promise<void> {
         if (knowledgeSection) s += '\n\n' + knowledgeSection;
 
         // Google Workspace document: inject fetched document content as context.
-        if (extractedDocumentText) {
-          s += '\n\n[Dokumen Google Drive: ' + (documentTitle || 'Dokumen') + ']\n' + extractedDocumentText.slice(0, 50000);
+        if (effectiveDocumentText) {
+          const docLabel = documentTitle || sessionInternalDocumentTitle || 'Dokumen';
+          s += '\n\n[Dokumen Google Drive: ' + docLabel + ']\n' + effectiveDocumentText.slice(0, 50000);
         }
 
         // Grounding: prevent hallucination by anchoring to provided context — clause chosen

@@ -30,8 +30,10 @@ export interface AutoModelContext {
   /** Masked original prompt — restricted-signal source for the sovereignty gate. */
   prompt: string;
   piiDetected?: boolean;
-  /** Masked doc text (multipart). Undefined for plain text; blocks Tier-3 candidate. */
+  /** Masked doc text (multipart / WGS fetch / sticky session doc). Undefined for plain text; blocks Tier-3 candidate. */
   documentText?: string;
+  /** The doc text came from the session's sticky internal document (earlier WGS fetch). */
+  documentTextFromSession?: boolean;
 }
 
 export interface AutoModelSelection {
@@ -92,6 +94,9 @@ export async function selectAutoModel(ctx: AutoModelContext): Promise<AutoModelS
   }
 
   const flags: string[] = [];
+  // A Google Workspace document (this turn or earlier in the session) is internal material:
+  // it blocks the Tier-3 candidate so the conversation stays on private Bedrock.
+  if (ctx.documentText && ctx.documentTextFromSession) flags.push('sovereign-internal-document');
   if (config.routing.externalTier3.enabled && !ctx.hasImages && !ctx.documentText) {
     const tier3Default = await getDefaultTier3Model();
     if (tier3Default) flags.push('tier3-candidate');
@@ -205,6 +210,7 @@ export async function routeRequest(input: RoutingInput): Promise<RoutingDecision
     prompt: input.originalPrompt,
     piiDetected: input.piiDetected,
     documentText: input.maskedDocumentText,
+    documentTextFromSession: input.documentTextFromSession,
   });
 
   return {

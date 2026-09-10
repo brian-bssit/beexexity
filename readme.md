@@ -154,10 +154,12 @@ migrations/
 ├── 031_knowledge_admin_indexes.sql # Knowledge admin: source_file index (lookup/grouping)
 ├── 032_tier3_models.sql            # Tier-3 external model registry (admin-managed, one default)
 ├── 033_restricted_terms.sql        # Restricted-word lexicon (sovereignty classifier, admin-editable)
-└── 034_tier1_tool_calls_meta.sql   # audit_logs.tool_calls_meta JSONB (Tier-1 tool-loop audit, default '[]')
+├── 034_tier1_tool_calls_meta.sql   # audit_logs.tool_calls_meta JSONB (Tier-1 tool-loop audit, default '[]')
+├── 035_user_google_drive_tokens.sql # Google Drive OAuth refresh tokens (per user)
+└── 036_session_internal_document.sql # sessions.internal_document_context/_title — sticky WGS doc (masked, ≤50k)
 
 tests/
-└── unit/                           # 40 test files, 530 tests
+└── unit/                           # 40 test files, 542 tests
     ├── api-key.service.test.ts     # 13 tests (generate, hash, validate, deactivate, delete)
     ├── application.service.test.ts # 12 tests (CRUD, duplicate rejection, key_count)
     ├── api-key-auth.middleware.test.ts  # 8 tests (6 auth scenarios + error paths)
@@ -509,6 +511,7 @@ turns keep their grounding clauses verbatim.
 | reasonCode | Branch | Meaning |
 |---|---|---|
 | `auto-fixed-model` | auto | access granted → fixed `config.routing.autoModelId` (private Bedrock) |
+| ↳ flag `sovereign-internal-document` | auto | the request carries a Google Workspace document (this turn's fetch **or** the session's sticky internal document) → `tier3-candidate` is never set — the conversation stays on private Bedrock |
 | `auto-tier-1` | auto | restricted (PII or lexicon hit) → private `tier1ModelId \|\| autoModelId`; flag `sovereign-tier-1` |
 | `auto-tier-3` | auto | `tier3-candidate` + empty knowledge retrieval → external OpenAI-compatible gateway; flag `sovereign-tier-3` |
 | `auto-access-denied` | auto | user not whitelisted for the auto model → DEFAULT_MODEL (qwen3-32b), flag set, candidate dropped |
@@ -720,6 +723,8 @@ JSON slides (JSON fallback)
 | rolling_summary | TEXT | Tier 2 memory |
 | memory_version | INTEGER | Default 0 |
 | extracted_facts | JSONB | Tier 3 memory |
+| internal_document_context | TEXT | [v036] Masked Google Workspace document text — sticky internal context (≤50k); blocks Tier-3 for the whole session |
+| internal_document_title | TEXT | [v036] Display title of that document |
 | expires_at | TIMESTAMPTZ | |
 | created_at / updated_at / last_activity_at | TIMESTAMPTZ | |
 
@@ -904,7 +909,7 @@ Admin-managed live lexicon: a substring hit on the masked prompt/doc text forces
 - **Pure function tests**: no mocking needed (context-assembly, content-builder, pii-masker)
 - **Route tests**: `vi.mock` for all dependencies
 
-### Test files (40 total, 530 tests)
+### Test files (40 total, 542 tests)
 ```
 tests/unit/
 ├── admin-applications.routes.test.ts
@@ -1094,6 +1099,8 @@ Retrieval is wired on the JSON text-only inference path. The multipart file-uplo
 Users paste Google Docs / Sheets / Slides / Drive file URLs into chat. The URL interceptor (`url-interceptor.service.ts`) runs after model validation and before PII masking: it detects GWS URLs (code-block URLs ignored), fetches content via the user's Drive OAuth token, and replaces the URL with a `[Google {type}: {title}]` placeholder. Doc text and prompt are PII-masked **separately**, then `maskedPrompt + maskedDocumentText` feeds the sovereignty gate — a clean doc routes normally, a doc with PII/restricted lexicon forces `auto-tier-1` (private Bedrock, `sovereign-tier-1`). Extracted content is injected into the system prompt as document context. Every fetch is recorded in `audit_logs.orchestration_meta` (`action: 'gdrive_fetch'`, fileId, mimeType, durationMs).
 
 **Folder links** (`drive.google.com/drive/folders/{id}`, incl. `/drive/u/{n}/folders/{id}`) are also supported: `fetchFolder()` in `google-drive.service.ts` lists the folder's children (`files.list`, `'{id}' in parents and trashed=false`, paginated), descends **one** nested level, and fetches each file with the same `fetchDocument()` path. Documents are joined into one blob under `===== n. {name} =====` headers and injected as a single `[Google Folder: {name}]` context — downstream inference is unchanged (one `extractedDocumentText`). Crawl limits: **≤20 files**, **≤50MB total**, **≤10MB per file**; fetch batches of 4 run via `Promise.allSettled`, so an oversized/unreadable/failed file is skipped rather than failing the turn. An empty or fully-unreadable folder yields `"Folder kosong atau tidak ada dokumen yang bisa dibaca."` rather than silence. Audit logs the folder name/id as `fileName`/`fileId`.
+
+**Sticky internal document context (session-scoped).** A fetched GWS document is *internal material*, so it becomes part of the session: `inference.routes.ts` persists the **masked** extraction via `setInternalDocumentContext()` (`sessions.internal_document_context` / `_title`, v036, ≤50k chars) on the fetching turn. Every later turn reads it back as `effectiveDocumentText` (`maskedDocumentText ?? session.internal_document_context`), which (a) feeds `routingInput.maskedDocumentText` so `selectAutoModel` never sets `tier3-candidate` and `classifySovereignTier` still scans the document for PII/restricted terms, and (b) is injected into the system prompt so follow-ups can actually answer about it. Without this, a follow-up (which carries no URL) had no document signal at all — it escalated to the external Tier-3 gateway on empty retrieval **and** was answered without the document. Audit flag: `sovereign-internal-document`. A later turn that pastes a new document replaces the stored context.
 
 New env vars (§12): `GOOGLE_DRIVE_CLIENT_ID` (OAuth 2.0 Web Client, distinct from the GIS login `GOOGLE_CLIENT_ID`), `GOOGLE_CLIENT_SECRET`, `GOOGLE_DRIVE_TIMEOUT_MS` (default 10000).
 
