@@ -4,11 +4,25 @@ import { extractDocumentText } from './document-extractor.service.js';
 /** Max downloadable file size (bytes) — larger documents must be uploaded manually. */
 const MAX_DRIVE_BYTES = 10 * 1024 * 1024;
 
+/** Folder crawl limits: ≤20 files, ≤50MB total (≤10MB per file, enforced by fetchDocument). */
+const MAX_FOLDER_FILES = 20;
+const MAX_FOLDER_BYTES = 50 * 1024 * 1024;
+/** folder → its files + one nested level (subfolders directly inside). */
+const FOLDER_MAX_DEPTH = 1;
+const FOLDER_FETCH_CONCURRENCY = 4;
+const FOLDER_MIME = 'application/vnd.google-apps.folder';
+const DRIVE_API = 'https://www.googleapis.com/drive/v3/files';
+
 export interface DriveFetchResult {
   title: string;
   text: string;
   mimeType: string;
   sizeBytes: number;
+}
+
+/** Folder crawl result — `title` is the folder name, `text` the concatenated documents. */
+export interface DriveFolderResult extends DriveFetchResult {
+  fileCount: number;
 }
 
 /** MIME type → export format mapping for Google-native formats. */
@@ -17,6 +31,135 @@ const EXPORT_MAP: Record<string, string> = {
   'application/vnd.google-apps.spreadsheet': 'text/csv',
   'application/vnd.google-apps.presentation': 'text/plain',
 };
+
+/** Fresh timeout per request — a shared signal would abort the whole crawl on one slow call. */
+function driveSignal(): AbortSignal {
+  return AbortSignal.timeout(config.google.driveTimeoutMs);
+}
+
+interface DriveFileMeta {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+}
+
+/** Escape a Drive id for use inside a `q` string literal. */
+function qLiteral(id: string): string {
+  return `'${id.replace(/'/g, "\\'")}'`;
+}
+
+/** List a folder's direct children (one page-loop; trashed items excluded). */
+async function listChildren(
+  parentId: string,
+  headers: Record<string, string>,
+): Promise<DriveFileMeta[]> {
+  const out: DriveFileMeta[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const params = new URLSearchParams({
+      q: `${qLiteral(parentId)} in parents and trashed=false`,
+      fields: 'nextPageToken,files(id,name,mimeType,size)',
+      pageSize: '100',
+      orderBy: 'name',
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+
+    const res = await fetch(`${DRIVE_API}?${params}`, { headers, signal: driveSignal() });
+    if (!res.ok) throw mapDriveError(res.status, res.statusText);
+
+    const body: { files?: DriveFileMeta[]; nextPageToken?: string } = await res.json();
+    out.push(...(body.files ?? []));
+    pageToken = body.nextPageToken;
+  } while (pageToken);
+
+  return out;
+}
+
+/**
+ * Crawl a Drive folder into a single text blob: list children (depth- and count-capped),
+ * fetch each readable file with {@link fetchDocument}, and join them under `===== n. name =====`
+ * headers. Oversized/unsupported/unreadable files are skipped — a bad file never blocks the turn.
+ */
+export async function fetchFolder(
+  folderId: string,
+  accessToken: string,
+): Promise<DriveFolderResult> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
+
+  // Folder name (also proves the id exists and is readable).
+  const metaRes = await fetch(`${DRIVE_API}/${encodeURIComponent(folderId)}?fields=id,name`, {
+    headers,
+    signal: driveSignal(),
+  });
+  if (!metaRes.ok) throw mapDriveError(metaRes.status, metaRes.statusText);
+  const folderMeta: { name: string } = await metaRes.json();
+
+  // Breadth-first collect, capped at MAX_FOLDER_FILES.
+  const files: DriveFileMeta[] = [];
+  let frontier: string[] = [folderId];
+
+  for (let depth = 0; depth <= FOLDER_MAX_DEPTH && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const parentId of frontier) {
+      const children = await listChildren(parentId, headers);
+      for (const child of children) {
+        if (child.mimeType === FOLDER_MIME) {
+          if (depth < FOLDER_MAX_DEPTH) next.push(child.id);
+          continue;
+        }
+        files.push(child);
+        if (files.length >= MAX_FOLDER_FILES) break;
+      }
+      if (files.length >= MAX_FOLDER_FILES) break;
+    }
+    frontier = next;
+  }
+
+  // Fetch in bounded batches; keep the ≤50MB total budget.
+  const docs: DriveFetchResult[] = [];
+  let totalBytes = 0;
+
+  for (let i = 0; i < files.length; i += FOLDER_FETCH_CONCURRENCY) {
+    const settled = await Promise.allSettled(
+      files.slice(i, i + FOLDER_FETCH_CONCURRENCY).map((f) => fetchDocument(f.id, accessToken)),
+    );
+
+    for (const outcome of settled) {
+      if (outcome.status === 'rejected') {
+        console.warn(`[google-drive] Folder file skipped: ${(outcome.reason as Error).message}`);
+        continue;
+      }
+      const doc = outcome.value;
+      if (!doc.text) continue; // unsupported/corrupt → empty extraction
+      if (totalBytes + doc.sizeBytes > MAX_FOLDER_BYTES) {
+        console.warn('[google-drive] Folder total size cap (50MB) reached — remaining files skipped');
+        totalBytes = MAX_FOLDER_BYTES;
+        break;
+      }
+      totalBytes += doc.sizeBytes;
+      docs.push(doc);
+    }
+
+    if (totalBytes >= MAX_FOLDER_BYTES) break;
+  }
+
+  const text =
+    docs.length === 0
+      ? 'Folder kosong atau tidak ada dokumen yang bisa dibaca.'
+      : docs.map((d, i) => `===== ${i + 1}. ${d.title} =====\n${d.text}`).join('\n\n');
+
+  return {
+    title: folderMeta.name,
+    text,
+    mimeType: FOLDER_MIME,
+    sizeBytes: totalBytes,
+    fileCount: docs.length,
+  };
+}
 
 /** Fetch and export a Google Workspace document. */
 export async function fetchDocument(

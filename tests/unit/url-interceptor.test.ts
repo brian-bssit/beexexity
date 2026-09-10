@@ -30,6 +30,20 @@ describe('extractUrls', () => {
     expect(urls[0].type).toBe('drive');
   });
 
+  it('extracts drive.google.com/drive/folders/{id}', () => {
+    const urls = extractUrls('baca folder https://drive.google.com/drive/folders/1AbCdEfGhIjKl');
+    expect(urls).toHaveLength(1);
+    expect(urls[0].fileId).toBe('1AbCdEfGhIjKl');
+    expect(urls[0].type).toBe('folder');
+  });
+
+  it('extracts folder URL with /drive/u/0/ segment and query params', () => {
+    const urls = extractUrls('https://drive.google.com/drive/u/0/folders/1AbCdEfGhIjKl?usp=drive_link');
+    expect(urls).toHaveLength(1);
+    expect(urls[0].fileId).toBe('1AbCdEfGhIjKl');
+    expect(urls[0].type).toBe('folder');
+  });
+
   it('extracts multiple URLs from same prompt', () => {
     const urls = extractUrls(
       'doc1: https://docs.google.com/document/d/aaaaaaaaaaa doc2: https://docs.google.com/spreadsheets/d/bbbbbbbbbbb'
@@ -147,5 +161,12 @@ describe('replaceUrlsWithPlaceholders', () => {
       { fileId: 'abc123', fullUrl: 'https://docs.google.com/document/d/abc123', type: 'document' },
     ], 'Review Doc');
     expect(result).toBe('tolong review [Google Document: Review Doc] dan kasih summary');
+  });
+  it('replaces URL with [Google Folder: title] for folder links', () => {
+    const url = 'https://drive.google.com/drive/folders/abc123def4';
+    const result = replaceUrlsWithPlaceholders(url, [
+      { fileId: 'abc123def4', fullUrl: url, type: 'folder' },
+    ], 'SOP Bank');
+    expect(result).toBe('[Google Folder: SOP Bank]');
   });
 });

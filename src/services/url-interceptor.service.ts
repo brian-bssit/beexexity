@@ -1,11 +1,11 @@
-import { fetchDocument } from './google-drive.service.js';
+import { fetchDocument, fetchFolder } from './google-drive.service.js';
 import { getValidAccessToken } from './google-drive-token.service.js';
 import type { DriveFetchResult } from './google-drive.service.js';
 
 export interface GoogleWorkspaceUrl {
   fileId: string;
   fullUrl: string;
-  type: 'document' | 'spreadsheet' | 'presentation' | 'drive';
+  type: 'document' | 'spreadsheet' | 'presentation' | 'drive' | 'folder';
 }
 
 export interface UrlInterceptorResult {
@@ -24,9 +24,10 @@ export interface UrlInterceptorResult {
  * - docs.google.com/spreadsheets/d/{fileId}
  * - docs.google.com/presentation/d/{fileId}
  * - drive.google.com/file/d/{fileId}
+ * - drive.google.com/drive/folders/{folderId}  (also /drive/u/{n}/folders/{id})
  * Captures full URL in group 1, fileId in group 2.
  */
-const GWS_URL_REGEX = /((?:https?:\/\/)?(?:docs\.google\.com\/(?:document|spreadsheets|presentation)\/d\/|drive\.google\.com\/file\/d\/)([a-zA-Z0-9_-]{10,100}))(?:[/?#]\S*)?/g;
+const GWS_URL_REGEX = /((?:https?:\/\/)?(?:docs\.google\.com\/(?:document|spreadsheets|presentation)\/d\/|drive\.google\.com\/file\/d\/|drive\.google\.com\/drive\/(?:u\/\d+\/)?folders\/|drive\.google\.com\/folders\/)([a-zA-Z0-9_-]{10,100}))(?:[/?#]\S*)?/g;
 
 /** Fenced (```) and inline (`) markdown code spans — content is not scanned. */
 const CODE_SPAN_REGEX = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
@@ -50,6 +51,7 @@ export function extractUrls(prompt: string): GoogleWorkspaceUrl[] {
     if (fullUrl.includes('/document/')) type = 'document';
     else if (fullUrl.includes('/spreadsheets/')) type = 'spreadsheet';
     else if (fullUrl.includes('/presentation/')) type = 'presentation';
+    else if (fullUrl.includes('/folders/')) type = 'folder';
 
     urls.push({ fileId, fullUrl, type });
   }
@@ -94,8 +96,11 @@ export async function interceptUrls(
   // Check token exists (throws if not)
   const token = await getValidAccessToken(userId);
 
-  // Fetch document
-  const doc: DriveFetchResult = await fetchDocument(target.fileId, token);
+  // Fetch document (folder → crawl its files into one text blob)
+  const doc: DriveFetchResult =
+    target.type === 'folder'
+      ? await fetchFolder(target.fileId, token)
+      : await fetchDocument(target.fileId, token);
 
   // Replace URLs with placeholder
   const cleanedPrompt = replaceUrlsWithPlaceholders(prompt, urls, doc.title);

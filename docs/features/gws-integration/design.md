@@ -223,3 +223,17 @@ const accessTokenCache = new Map<string, { token: string; expiresAt: number }>()
 - **Restricted terms:** `classifySovereignTier` checks document text for restricted lexicon (rahasia bank, dll). Hit → force Tier-1, never Tier-3.
 - **No write scopes:** All requested scopes are read-only.
 - **Audit trail:** Every fetch logged to `audit_logs.orchestration_meta` with user_id, file_id, duration.
+
+---
+
+## Addendum: Folder support (2026-09-10)
+
+Folder links (`drive.google.com/drive/folders/{id}`, incl. `/drive/u/{n}/folders/{id}`) previously fell through the interceptor regex and reached the model as a raw URL — unreadable.
+
+- **Detection:** `GWS_URL_REGEX` gains the folder alternatives; `GoogleWorkspaceUrl.type` gains `'folder'`. Placeholder: `[Google Folder: {name}]`.
+- **Fetch:** `fetchFolder(folderId, token)` in `google-drive.service.ts` — `files.get` for the folder name, then `files.list` (`'{id}' in parents and trashed=false`, `pageSize=100`, paginated via `nextPageToken`, `supportsAllDrives`), depth-first-limited to **1 nested level**.
+- **Per-file fetch reuses `fetchDocument()`** unchanged — Google-native export/downlink + `extractDocumentText()`.
+- **Limits:** ≤20 files, ≤50MB total, ≤10MB per file. Batches of 4 via `Promise.allSettled`; a failed file is logged and skipped (turn never blocked). Empty → `"Folder kosong atau tidak ada dokumen yang bisa dibaca."`
+- **Assembly:** documents joined under `===== n. {name} =====` into a single `DriveFolderResult` (`DriveFolderResult extends DriveFetchResult`, `+fileCount`). `title` = folder name, `mimeType` = `application/vnd.google-apps.folder`.
+- **Downstream unchanged:** `interceptUrls` dispatches on `type === 'folder'`; the caller still receives one `extractedDocumentText` blob. No changes in `inference.routes.ts`.
+- **Timeout:** a fresh `AbortSignal.timeout(driveTimeoutMs)` per request — a shared signal would abort the whole crawl once the first request's deadline elapsed.
